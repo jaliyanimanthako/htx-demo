@@ -1,0 +1,49 @@
+# ── Secrets / local config (server address + API keys live here) ─────────────
+.env
+.env.*
+!.env.sample
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Model weights / caches (downloaded automatically, large) ──────────────────
+models/
+*.pt
+*.pth
+*.ts
+*.onnx
+*.engine
+*.safetensors
+*.bin
+
+# ── Outputs ───────────────────────────────────────────────────────────────────
+results/
+*.log
+
+# ── Videos / media (test footage and recordings are not part of the repo) ─────
+*.MOV
+*.mov
+*.mp4
+*.avi
+*.mkv
+
+# ── Editors / OS ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

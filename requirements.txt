@@ -1,0 +1,16 @@
+# Client side (Mac / laptop): all runners + YOLOE. Tested with Python 3.14 on macOS.
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# GPU-server environments are created by server/setup_*.sh (see README).
+
+openai==2.26.0
+requests==2.34.2
+python-dotenv==1.2.1
+pillow==12.1.1
+numpy==2.5.4
+opencv-python==5.0.0.93
+
+# YOLOE (yoloe_infer.py, exit_monitor.py without --no-yoloe)
+torch==2.14.1
+torchvision==0.29.1
+ultralytics==8.4.176
+clip @ git+https://github.com/ultralytics/CLIP.git

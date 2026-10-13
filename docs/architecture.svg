@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="280" viewBox="0 0 1280 280" role="img" aria-labelledby="title desc">
+  <title id="title">Exit obstruction monitor architecture</title>
+  <desc id="desc">Video feeds YOLOE and LocateAnything. Detections feed object tracking, then obstruction assessment with background Qwen scene checks. Exit memory supplies the live view, report and snapshots. Dashed arrows indicate background work.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M1 1 L7 4 L1 7" fill="none" stroke="#999" stroke-width="1.2"/>
+    </marker>
+  </defs>
+  <rect width="1280" height="280" rx="16" fill="#181a1b"/>
+  <g fill="none" stroke="#999" stroke-width="1.2" marker-end="url(#arrow)">
+    <path d="M160 140 H180 V90 H200"/>
+    <path d="M160 140 H180 V210 H200" stroke-dasharray="6 5"/>
+    <path d="M340 90 H380"/>
+    <path d="M340 210 H360 V105 H380" stroke-dasharray="6 5"/>
+    <path d="M520 90 H740"/>
+    <path d="M520 105 H540 V210 H560" stroke-dasharray="6 5"/>
+    <path d="M700 210 H720 V105 H740" stroke-dasharray="6 5"/>
+    <path d="M880 90 H920"/>
+    <path d="M1060 90 H1080 V60 H1100"/>
+    <path d="M1060 90 H1080 V180 H1100"/>
+  </g>
+  <rect x="20" y="110" width="140" height="60" rx="14" fill="#0e2a3e" stroke="#294454"/>
+  <text text-anchor="middle" fill="#80c5ff" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="500">
+    <tspan x="90" y="145">Video / Camera</tspan>
+  </text>
+  <rect x="200" y="60" width="140" height="60" rx="14" fill="#0e2a3e" stroke="#294454"/>
+  <text text-anchor="middle" fill="#80c5ff" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="500">
+    <tspan x="270" y="85.5">YOLOE</tspan>
+    <tspan x="270" y="104.5">Fast detection</tspan>
+  </text>
+  <rect x="200" y="180" width="140" height="60" rx="14" fill="#0e2a3e" stroke="#294454"/>
+  <text text-anchor="middle" fill="#80c5ff" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="500">
+    <tspan x="270" y="205.5">LocateAnything</tspan>
+    <tspan x="270" y="224.5">Detailed detection</tspan>
+  </text>
+  <rect x="380" y="60" width="140" height="60" rx="14" fill="#0e2a3e" stroke="#294454"/>
+  <text text-anchor="middle" fill="#80c5ff" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="500">
+    <tspan x="450" y="95">Object tracking</tspan>
+  </text>
+  <rect x="560" y="180" width="140" height="60" rx="14" fill="#0e2a3e" stroke="#294454"/>
+  <text text-anchor="middle" fill="#80c5ff" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="500">
+    <tspan x="630" y="205.5">Qwen</tspan>
+    <tspan x="630" y="224.5">Scene checks</tspan>
+  </text>
+  <rect x="740" y="60" width="140" height="60" rx="14" fill="#0e2a3e" stroke="#294454"/>
+  <text text-anchor="middle" fill="#80c5ff" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="500">
+    <tspan x="810" y="85.5">Obstruction</tspan>
+    <tspan x="810" y="104.5">assessment</tspan>
+  </text>
+  <rect x="1100" y="30" width="140" height="60" rx="14" fill="#0e2a3e" stroke="#294454"/>
+  <text text-anchor="middle" fill="#80c5ff" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="500">
+    <tspan x="1170" y="65">Live view</tspan>
+  </text>
+  <rect x="1100" y="150" width="140" height="60" rx="14" fill="#0e2a3e" stroke="#294454"/>
+  <text text-anchor="middle" fill="#80c5ff" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="500">
+    <tspan x="1170" y="185">Report + snapshots</tspan>
+  </text>
+  <path d="M920 70 A70 10 0 0 1 1060 70 V110 A70 10 0 0 1 920 110 Z" fill="#0e2a3e" stroke="#294454"/>
+  <ellipse cx="990" cy="70" rx="70" ry="10" fill="#0e2a3e" stroke="#294454"/>
+  <text text-anchor="middle" fill="#80c5ff" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="500">
+    <tspan x="990" y="97">Exit memory</tspan>
+  </text>
+</svg>

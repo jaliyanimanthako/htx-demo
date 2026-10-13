@@ -38,29 +38,7 @@ objects every frame and shows the result live.
 `exit_monitor.py` combines fast detection, object tracking and background model
 checks to show whether each exit is clear or obstructed.
 
-```mermaid
-flowchart LR
-    camera("Video / Camera")
-    yolo("YOLOE<br/>Fast detection")
-    locate("LocateAnything<br/>Detailed detection")
-    tracks("Object tracking")
-    qwen("Qwen<br/>Scene checks")
-    decision("Obstruction<br/>assessment")
-    memory[("Exit memory")]
-    live("Live view")
-    report("Report + snapshots")
-
-    camera --> yolo --> tracks
-    camera -.-> locate -.-> tracks
-    tracks --> decision
-    tracks -.-> qwen -.-> decision
-    decision --> memory
-    memory --> live
-    memory --> report
-
-    classDef default fill:#0e2a3e,stroke:#294454,color:#80c5ff,rx:14,ry:14
-    linkStyle default stroke:#888888,stroke-width:1px
-```
+![Horizontal architecture diagram of the exit obstruction monitor](docs/architecture.svg)
 
 **Dashed arrows** show background model work. YOLOE and tracking run on the client;
 LocateAnything and Qwen run on the GPU server without blocking the live view.

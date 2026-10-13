@@ -35,77 +35,36 @@ objects every frame and shows the result live.
 
 ## Architecture
 
-`exit_monitor.py` runs on the **client** (a laptop or the GPU server itself). It
-processes video every frame while background workers call two model services.
-**The video loop never waits for a server response**; it uses results as they arrive.
-
-### System overview — what runs where
-
-Solid arrows show the local data flow. Dashed arrows show asynchronous requests and
-results, handled by workers in the client.
+`exit_monitor.py` combines fast detection, object tracking and background model
+checks to show whether each exit is clear or obstructed.
 
 ```mermaid
-flowchart TB
-    source["VIDEO INPUT<br/>Recorded file · Webcam · RTSP"]
+flowchart LR
+    camera("Video / Camera")
+    yolo("YOLOE<br/>Fast detection")
+    locate("LocateAnything<br/>Detailed detection")
+    tracks("Object tracking")
+    qwen("Qwen<br/>Scene checks")
+    decision("Obstruction<br/>assessment")
+    memory[("Exit memory")]
+    live("Live view")
+    report("Report + snapshots")
 
-    subgraph client["CLIENT — exit_monitor.py"]
-        direction TB
-        fast["PER-FRAME PIPELINE<br/>YOLOE → Tracking → Obstruction rules"]
-        memory["EXIT MEMORY<br/>Status · Blockers · Duration · History<br/>Confirm exit and hold status before publishing"]
-        display["LIVE VIEW<br/>Annotated video + exit status panel<br/>Desktop window / MJPEG browser stream"]
-        fast -->|"Candidate status + cached Qwen verdict"| memory
-        memory -->|"Stable exit status"| display
-    end
+    camera --> yolo --> tracks
+    camera -.-> locate -.-> tracks
+    tracks --> decision
+    tracks -.-> qwen -.-> decision
+    decision --> memory
+    memory --> live
+    memory --> report
 
-    subgraph server["GPU SERVER — independent model services"]
-        direction LR
-        locate["GPU 1 · LocateAnything-3B<br/>Accurate labelled boxes<br/>~1.5–1.9 s model time"]
-        qwen["GPU 0 · Qwen3-VL-4B<br/>Exit confirmation · Floor check<br/>Obstruction verdict · Object naming"]
-    end
-
-    files["SAVED OUTPUTS<br/>Snapshot on each status change<br/>report.json when the run ends<br/>Optional annotated video (--save)"]
-
-    source -->|"Frames"| fast
-    fast -.->|"Newest frame + categories"| locate
-    locate -.->|"Boxes aligned to current frame"| fast
-    fast -.->|"Event crops + periodic checks / naming"| qwen
-    qwen -.->|"Cache answers on tracks / exits; extend categories"| fast
-    memory -->|"Status changes + history"| files
-    display -->|"Optional video recording"| files
-
-    classDef local fill:#eaf2ff,stroke:#2563eb,color:#172554
-    classDef remote fill:#fff4df,stroke:#b45309,color:#451a03
-    classDef output fill:#e8f7ee,stroke:#15803d,color:#14532d
-    class fast,memory local
-    class locate,qwen remote
-    class source,display,files output
+    classDef default fill:#0e2a3e,stroke:#294454,color:#80c5ff,rx:14,ry:14
+    linkStyle default stroke:#888888,stroke-width:1px
 ```
 
-### Per-frame pipeline — how a status is produced
-
-```mermaid
-flowchart TD
-    detect["1 · DETECT<br/>YOLOE finds doors, EXIT signs and obstacles"]
-    track["2 · TRACK AND MERGE<br/>Keep stable IDs; compensate for camera motion<br/>Merge any new LocateAnything boxes"]
-    rules["3 · APPLY OBSTRUCTION RULES<br/>Use cached Qwen exit and floor checks<br/>Measure blockers in each door's clearance zone"]
-    combine["4 · COMBINE EVIDENCE<br/>Geometric status + recent Qwen verdict<br/>The more severe status wins"]
-    hold["5 · UPDATE EXIT MEMORY<br/>Require exit confirmation or timeout<br/>Candidate must persist for --hold (default 1.5 s)"]
-    status["6 · DISPLAY AND LOG<br/>CLEAR · PARTIALLY OBSTRUCTED · OBSTRUCTED"]
-
-    detect --> track --> rules --> combine --> hold --> status
-```
-
-- **LocateAnything worker:** takes the newest frame when ready, rather than building
-  a queue of old frames. Returned boxes are corrected for camera movement before
-  merging into the tracker.
-- **Qwen workers:** confirm new doors, check whether new blockers stand on the floor,
-  and reassess obstruction when blockers change or every `--recheck` s (default 8).
-  Answers are cached on tracks/exits; verdicts expire after `--verdict-ttl` s (default 6).
-- **Object naming:** Qwen periodically names objects near doors; new names extend
-  the categories used by subsequent LocateAnything requests.
-- **Exit memory:** stores one record per exit. While a candidate status is being
-  checked, the display keeps the previous status (initially `CHECKING`). With Qwen
-  enabled, confirmation can time out after `--confirm-timeout` s (default 6).
+**Dashed arrows** show background model work. YOLOE and tracking run on the client;
+LocateAnything and Qwen run on the GPU server without blocking the live view.
+Exit memory stabilizes each status before it is displayed and logged.
 
 Simpler variants are also included (see [Other runners](#other-runners)).
 

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="280" viewBox="0 0 1280 280" role="img" aria-labelledby="title desc">
   <title id="title">Exit obstruction monitor architecture</title>
-  <desc id="desc">Video feeds YOLOE and LocateAnything. Detections feed object tracking, then obstruction assessment with background Qwen scene checks. Exit memory supplies the live view, report and snapshots. Dashed arrows indicate background work.</desc>
+  <desc id="desc">Video feeds YOLOE, LocateAnything and Qwen. Detections feed object tracking, then obstruction assessment with background Qwen scene checks using video crops selected from tracked objects. Exit memory supplies the live view, report and snapshots. Dashed arrows indicate background work.</desc>
   <defs>
     <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M1 1 L7 4 L1 7" fill="none" stroke="#999" stroke-width="1.2"/>
@@ -13,7 +13,7 @@
     <path d="M340 90 H380"/>
     <path d="M340 210 H360 V105 H380" stroke-dasharray="6 5"/>
     <path d="M520 90 H740"/>
-    <path d="M520 105 H540 V210 H560" stroke-dasharray="6 5"/>
+    <path d="M90 170 V260 H540 V210 H560" stroke-dasharray="6 5"/>
     <path d="M700 210 H720 V105 H740" stroke-dasharray="6 5"/>
     <path d="M880 90 H920"/>
     <path d="M1060 90 H1080 V60 H1100"/>

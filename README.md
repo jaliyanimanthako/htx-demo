@@ -14,6 +14,12 @@ objects every frame and shows the result live.
 | **LocateAnything-3B** (NVIDIA) | Accurate boxes, finds what YOLOE misses | ~1 per 1.5–2 s (server GPU 1) |
 | **Qwen3-VL-4B-Instruct** (vLLM) | Scene understanding: is it an exit? on the floor? blocked? | only on events (server GPU 0) |
 
+![exit_monitor.py on a recorded walkthrough](docs/demo.gif)
+
+*`exit_monitor.py` on `IMG_0450.MOV`: original (left), annotated (right), exit panel and
+event log (bottom). The exit is confirmed by Qwen and turns **BLOCKED** (chairs, cardboard
+boxes, bin); items on desks are dropped by the floor check.*
+
 > The recorded test videos (`IMG_04xx.MOV`) stand in for the live camera. Any script
 > also accepts a webcam index (`0`) or an RTSP URL, so switching to the real camera
 > needs no code changes.
@@ -43,6 +49,7 @@ checks to show whether each exit is clear or obstructed.
 
 **Dashed arrows** show background model work. YOLOE and tracking run on the client;
 LocateAnything and Qwen run on the GPU server without blocking the live view.
+Qwen receives video images; tracking selects the crops and triggers scene checks.
 Exit memory stabilizes each status before it is displayed and logged.
 
 Simpler variants are also included (see [Other runners](#other-runners)).

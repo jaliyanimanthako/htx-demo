@@ -23,9 +23,8 @@ for f in bench_latency.py live_infer.py video_infer.py core/prompts.py core/stre
 done
 if [ ${#missing[@]} -gt 0 ]; then
   echo "Missing in $ROOT: ${missing[*]}"
-  echo "Copy the whole project (not just server/) from the Mac, e.g.:"
-  echo "  rsync -av --exclude .venv --exclude models --exclude results --exclude __pycache__ \\"
-  echo "        htx_demo/ $(whoami)@$(hostname):$ROOT/"
+  echo "The project is incomplete — clone / update the repository here:"
+  echo "  git clone <repo-url> $ROOT     (or: cd $ROOT && git pull)"
   exit 1
 fi
 INTERVAL="${INTERVAL:-0.2}"     # seconds between API calls in the live run

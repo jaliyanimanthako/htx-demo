@@ -101,13 +101,19 @@ The first YOLOE run downloads `yoloe-11s-seg.pt` and the MobileCLIP text encoder
 
 ### 2. GPU server (Linux, NVIDIA driver)
 
-Copy the project to the server (from the Mac):
+Clone the repository on the server (and `git pull` there to pick up later changes):
 
 ```bash
-cd <folder that contains htx_demo>
-rsync -av --exclude .venv --exclude models --exclude results --exclude __pycache__ \
-      htx_demo/ <user>@<server>:~/qwe/
+git clone <repo-url> ~/qwe
+cd ~/qwe
+# later, after pushing changes from the Mac:
+git pull
 ```
+
+The repo contains code only. Test videos, model weights and `.env` are git-ignored, so
+copy a video over once (`scp IMG_0451.MOV <user>@<server>:~/qwe/`) — the weights
+download automatically on first use. The server needs no `.env` for the model servers;
+`server/run_monitor.sh` finds them on `localhost`.
 
 Each model gets its **own Python environment** (their pinned packages conflict).
 Start servers inside **tmux** so they survive logging out

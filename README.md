@@ -23,13 +23,14 @@ objects every frame and shows the result live.
 ## Contents
 
 1. [Architecture](#architecture)
-2. [Repository layout](#repository-layout)
-3. [Setup](#setup) — client, GPU server, `.env`
-4. [Running](#running) — the main monitor and the other runners
-5. [How decisions are made](#how-decisions-are-made)
-6. [Measured performance](#measured-performance)
-7. [Troubleshooting](#troubleshooting)
-8. [Limitations, reproducibility, licences](#limitations)
+2. [Why both YOLOE and LocateAnything?](#why-both-yoloe-and-locateanything)
+3. [Repository layout](#repository-layout)
+4. [Setup](#setup) — client, GPU server, `.env`
+5. [Running](#running) — the main monitor and the other runners
+6. [How decisions are made](#how-decisions-are-made)
+7. [Measured performance](#measured-performance)
+8. [Troubleshooting](#troubleshooting)
+9. [Limitations, reproducibility, licences](#limitations)
 
 ---
 
@@ -45,6 +46,49 @@ LocateAnything and Qwen run on the GPU server without blocking the live view.
 Exit memory stabilizes each status before it is displayed and logged.
 
 Simpler variants are also included (see [Other runners](#other-runners)).
+
+---
+
+## Why both YOLOE and LocateAnything?
+
+They are complementary: **YOLOE is fast, LocateAnything is accurate.** Neither alone gives
+a live view that is also correct.
+
+| | YOLOE-11s | LocateAnything-3B |
+|---|---|---|
+| Time per frame | 45–75 ms on the Mac (expected ~10–20 ms on a 4090) | 1.5–1.9 s model time, 2–2.5 s round trip |
+| Frames per second | ~13–20 | ~0.5 (one frame at a time) |
+| Accuracy | weaker — misses doors, sometimes boxes pillars / fridges as doors | strong — finds chairs, stools, boxes and glass doors; labels are richer |
+| Categories | fixed text prompts | prompts plus names supplied by Qwen (open-world) |
+
+**Why the per-frame layer is YOLOE.**
+1. *Tracking needs frequent detections.* A tracker links an object between frames by
+   small movements. With detections ~2 s apart, a handheld camera moves too far in
+   between: links break, objects lose their IDs and with them their stored Qwen
+   verdicts (this broke an earlier position-based cache).
+2. *New objects appear sooner.* YOLOE boxes something that enters the frame within a
+   frame or two; LocateAnything alone takes up to ~2 s.
+3. *Boxes stay accurate when the camera jerks.* Between LocateAnything results boxes
+   move only by estimated camera motion, which drifts on fast pans and blur. YOLOE
+   corrects them every frame.
+4. *GPU headroom.* LocateAnything alone would keep a whole GPU busy; YOLOE uses a small
+   fraction of one, leaving room for Qwen.
+
+**Why LocateAnything is still needed.** YOLOE alone misses doors and objects, and its
+false doors would raise false alarms. About once every 1.5–2 s LocateAnything's boxes
+are mapped to the current frame and merged into the tracks: they fix labels, add
+what YOLOE missed, and the tracker then follows them frame by frame. Names that Qwen
+finds at the door are added to LocateAnything's categories, so objects outside the
+fixed list can be found too.
+
+**So:** YOLOE keeps the view *continuous*, LocateAnything keeps it *correct*, and Qwen
+decides what it *means* (is it an exit, is it on the floor, is it blocked).
+
+**A simpler option.** `--no-yoloe` runs LocateAnything + Qwen only
+(`python exit_monitor.py <video> --no-yoloe`). Results are more accurate per update
+but ~1–2 s old, and IDs are less stable on fast camera moves. It is a good starting
+point when a 2 s update interval is acceptable (a walkthrough inspection, not alarms)
+or when you do not want to install YOLOE. Compare the two on the same video.
 
 ---
 

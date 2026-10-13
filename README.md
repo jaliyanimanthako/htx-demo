@@ -35,39 +35,77 @@ objects every frame and shows the result live.
 
 ## Architecture
 
-`exit_monitor.py` is the main program. Three loops run at different speeds and meet in
-a per-exit memory; nothing in the per-frame loop ever waits for a model on the server.
+`exit_monitor.py` runs on the **client** (a laptop or the GPU server itself). It
+processes video every frame while background workers call two model services.
+**The video loop never waits for a server response**; it uses results as they arrive.
 
-```
- video / camera ─► FAST LOOP (every frame, ~30–80 ms) ─────────────────────► window / browser
-                   YOLOE ─► tracker (IDs, camera motion) ─► position rule ─► draw
-                        ▲ boxes            │ events            ▲ verdicts
-                        │                  ▼                   │
-          LocateAnything worker      EXIT MEMORY  (one record per exit)
-          (~1 / 1.5–2 s, GPU 1)      status · since when · blockers · snapshot · history
-          Qwen names extend its           │ events ▲ verdicts
-          category list                   ▼        │
-                                     Qwen-4B worker (on events, GPU 0)
-                                     • new door           → "is it an exit?"
-                                     • new obstacle there → "floor or raised surface?"
-                                     • blockers changed / every 8 s → verdict C / P / B
-                                                  │
-                                                  ▼
-                                   report.json + snapshot per status change
+### System overview — what runs where
+
+Solid arrows show the local data flow. Dashed arrows show asynchronous requests and
+results, handled by workers in the client.
+
+```mermaid
+flowchart TB
+    source["VIDEO INPUT<br/>Recorded file · Webcam · RTSP"]
+
+    subgraph client["CLIENT — exit_monitor.py"]
+        direction TB
+        fast["PER-FRAME PIPELINE<br/>YOLOE → Tracking → Obstruction rules"]
+        memory["EXIT MEMORY<br/>Status · Blockers · Duration · History<br/>Confirm exit and hold status before publishing"]
+        display["LIVE VIEW<br/>Annotated video + exit status panel<br/>Desktop window / MJPEG browser stream"]
+        fast -->|"Candidate status + cached Qwen verdict"| memory
+        memory -->|"Stable exit status"| display
+    end
+
+    subgraph server["GPU SERVER — independent model services"]
+        direction LR
+        locate["GPU 1 · LocateAnything-3B<br/>Accurate labelled boxes<br/>~1.5–1.9 s model time"]
+        qwen["GPU 0 · Qwen3-VL-4B<br/>Exit confirmation · Floor check<br/>Obstruction verdict · Object naming"]
+    end
+
+    files["SAVED OUTPUTS<br/>Snapshot on each status change<br/>report.json when the run ends<br/>Optional annotated video (--save)"]
+
+    source -->|"Frames"| fast
+    fast -.->|"Newest frame + categories"| locate
+    locate -.->|"Boxes aligned to current frame"| fast
+    fast -.->|"Event crops + periodic checks / naming"| qwen
+    qwen -.->|"Cache answers on tracks / exits; extend categories"| fast
+    memory -->|"Status changes + history"| files
+    display -->|"Optional video recording"| files
+
+    classDef local fill:#eaf2ff,stroke:#2563eb,color:#172554
+    classDef remote fill:#fff4df,stroke:#b45309,color:#451a03
+    classDef output fill:#e8f7ee,stroke:#15803d,color:#14532d
+    class fast,memory local
+    class locate,qwen remote
+    class source,display,files output
 ```
 
-- **Fast loop** – YOLOE detects doors, EXIT signs and obstacles from text prompts;
-  a tracker keeps stable IDs and moves boxes with the camera (optical flow) between
-  detections; a geometric rule gives a per-frame guess of each exit's status.
-- **LocateAnything** – the worker always takes the *newest* frame, gets high-quality
-  labelled boxes, maps them to the current frame (camera motion) and merges them into
-  the tracks. Qwen periodically names objects at the door; names not already covered
-  are added to LocateAnything's categories (open-world).
-- **Qwen** – asked only when something changes. Its answers are stored on the
-  track/exit, so a chair confirmed on the floor stays confirmed while it is tracked.
-- **Exit memory** – an exit's status changes only after the new status has held for
-  `--hold` s (default 1.5), and only once Qwen has confirmed it is an exit (or after
-  `--confirm-timeout` s). Each change is logged with a snapshot.
+### Per-frame pipeline — how a status is produced
+
+```mermaid
+flowchart TD
+    detect["1 · DETECT<br/>YOLOE finds doors, EXIT signs and obstacles"]
+    track["2 · TRACK AND MERGE<br/>Keep stable IDs; compensate for camera motion<br/>Merge any new LocateAnything boxes"]
+    rules["3 · APPLY OBSTRUCTION RULES<br/>Use cached Qwen exit and floor checks<br/>Measure blockers in each door's clearance zone"]
+    combine["4 · COMBINE EVIDENCE<br/>Geometric status + recent Qwen verdict<br/>The more severe status wins"]
+    hold["5 · UPDATE EXIT MEMORY<br/>Require exit confirmation or timeout<br/>Candidate must persist for --hold (default 1.5 s)"]
+    status["6 · DISPLAY AND LOG<br/>CLEAR · PARTIALLY OBSTRUCTED · OBSTRUCTED"]
+
+    detect --> track --> rules --> combine --> hold --> status
+```
+
+- **LocateAnything worker:** takes the newest frame when ready, rather than building
+  a queue of old frames. Returned boxes are corrected for camera movement before
+  merging into the tracker.
+- **Qwen workers:** confirm new doors, check whether new blockers stand on the floor,
+  and reassess obstruction when blockers change or every `--recheck` s (default 8).
+  Answers are cached on tracks/exits; verdicts expire after `--verdict-ttl` s (default 6).
+- **Object naming:** Qwen periodically names objects near doors; new names extend
+  the categories used by subsequent LocateAnything requests.
+- **Exit memory:** stores one record per exit. While a candidate status is being
+  checked, the display keeps the previous status (initially `CHECKING`). With Qwen
+  enabled, confirmation can time out after `--confirm-timeout` s (default 6).
 
 Simpler variants are also included (see [Other runners](#other-runners)).
 

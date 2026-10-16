@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exit Monitor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <!-- ── Left: live frames from the Python detector ─────────────────────── -->
+    <section class="frames">
+      <form class="panel controls" id="controls" onsubmit="return false">
+        <input id="api" type="url" placeholder="Backend URL, e.g. http://&lt;server-ip&gt;:8100" aria-label="Backend URL">
+        <input id="token" type="password" placeholder="Token (if set)" aria-label="Token">
+        <button id="connect" type="button">Connect</button>
+        <select id="video" aria-label="Video" disabled><option>— video —</option></select>
+        <button id="start" type="button" disabled>Start</button>
+        <button id="stop" type="button" class="secondary" disabled>Stop</button>
+        <p class="status" id="status">Not connected</p>
+      </form>
+
+      <article class="panel frame-panel">
+        <header class="panel-head">
+          <h2>Frame <span class="muted">(original)</span></h2>
+          <span class="conn" id="conn-original">idle</span>
+        </header>
+        <div class="frame-box">
+          <img id="img-original" alt="Original camera frame">
+          <p class="placeholder" id="ph-original">No session — connect and press Start</p>
+        </div>
+      </article>
+
+      <article class="panel frame-panel">
+        <header class="panel-head">
+          <h2>Frame <span class="muted">(with bounding boxes)</span></h2>
+          <span class="conn" id="conn-annotated">idle</span>
+        </header>
+        <div class="frame-box">
+          <img id="img-annotated" alt="Frame with detected exits and obstructions">
+          <p class="placeholder" id="ph-annotated">No session — connect and press Start</p>
+        </div>
+      </article>
+    </section>
+
+    <!-- ── Right: mockup only (not connected yet) ─────────────────────────── -->
+    <aside class="side">
+      <article class="panel checklist-panel">
+        <header class="panel-head">
+          <h2>Predefined checklist</h2>
+          <span class="badge">mockup</span>
+        </header>
+        <ul class="checklist">
+          <li><label><input type="checkbox" disabled> All exits identified</label></li>
+          <li><label><input type="checkbox" disabled> Exit paths clear of obstructions</label></li>
+          <li><label><input type="checkbox" disabled> Exit signs visible</label></li>
+          <li><label><input type="checkbox" disabled> Doors open fully</label></li>
+        </ul>
+
+        <div class="toast" id="toast" role="status">
+          <span class="toast-dot"></span>
+          <p>EXIT #9 is <strong>BLOCKED</strong> — chair, cardboard box</p>
+          <button class="toast-close" id="toast-close" aria-label="Dismiss">&times;</button>
+        </div>
+      </article>
+
+      <form class="panel chat" onsubmit="return false">
+        <input type="text" placeholder="Chat / command (coming soon)" disabled>
+        <button type="submit" disabled>Send</button>
+      </form>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

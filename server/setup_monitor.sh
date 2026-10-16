@@ -29,7 +29,8 @@ echo "== PyTorch ($TORCH_INDEX) =="
 $PIP install torch torchvision --index-url "$TORCH_INDEX"
 
 echo "== Monitor requirements =="
-$PIP install ultralytics==8.4.176 openai==2.26.0 requests python-dotenv pillow numpy
+$PIP install ultralytics==8.4.176 openai==2.26.0 requests python-dotenv pillow numpy \
+  fastapi==0.121.3 "uvicorn[standard]==0.38.0"
 # ultralytics pulls opencv-python (needs a display); swap in the headless build
 $PIP uninstall opencv-python 2>/dev/null || pip uninstall -y opencv-python || true
 $PIP install opencv-python-headless
@@ -52,4 +53,4 @@ print("torch", torch.__version__, "| CUDA", torch.cuda.is_available(),
       "| ultralytics", ultralytics.__version__, "| cv2", cv2.__version__)
 PY
 echo
-echo "Done. Next: bash server/run_monitor.sh IMG_0451.MOV"
+echo "Done. Next: bash server/run_backend.sh   (or: bash server/run_monitor.sh IMG_0451.MOV)"

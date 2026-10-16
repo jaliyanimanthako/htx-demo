@@ -264,9 +264,20 @@ def _more_severe(a: str, b: str) -> str:
 # ── Monitor ───────────────────────────────────────────────────────────────────
 
 class ExitMonitor:
-    def __init__(self, args):
+    """
+    The full pipeline. Used by the CLI (main()) and by the FastAPI backend:
+      on_frame(original, annotated, combined, state)   called once per processed frame
+      on_event(event_dict)                             called on each exit status change
+      request_stop()                                   ends run() cleanly (writes the report)
+    """
+
+    def __init__(self, args, on_frame=None, on_event=None, fast_detector=None):
+        """fast_detector: an already-loaded FastDetector to reuse (the backend keeps one)."""
         self.args = args
-        self.fast = None if args.no_yoloe else FastDetector(args.yoloe_model)
+        self.on_frame, self.on_event = on_frame, on_event
+        self._halt = threading.Event()
+        self.report_path = None
+        self.fast = None if args.no_yoloe else (fast_detector or FastDetector(args.yoloe_model))
         self.locate = LocateEngine(args.locate_url, max_image_side=args.proc_width,
                                    mode=args.mode) if args.locate_url else None
         self.qwen = None
@@ -498,6 +509,14 @@ class ExitMonitor:
         rec.history.append({"video_time_s": round(vt, 2), "status": status,
                             "blockers": list(rec.blockers)})
         self.events.append((vt, msg, status))
+        if self.on_event:
+            try:
+                self.on_event({"video_time_s": round(vt, 2), "exit_id": rec.id,
+                               "exit_sign": bool(track["signed"]), "from": old, "to": status,
+                               "status_text": STATUS_TEXT[status], "blockers": list(rec.blockers),
+                               "text": msg})
+            except Exception as e:                      # a sink must never stop detection
+                print(f"  on_event error: {e}")
         if self.args.snapshots and status != "unknown":
             path = self.snap_dir / f"exit{rec.id}_{vt:06.1f}s_{status}.jpg"
             x1, y1, x2, y2 = (int(v) for v in track["box"])
@@ -535,6 +554,22 @@ class ExitMonitor:
             self._label(out, f"{t['label']} #{t['id']}{mark}",
                         x1, y1, OBSTACLE_BGR, s * 0.85, th)
         return out
+
+    def _state(self, now: float, vt: float, fps: float) -> dict:
+        """Snapshot for the web app (GET /state)."""
+        by_id = {t["id"]: t for t in self.tracker.tracks}
+        exits = []
+        for r in sorted(self.exits.values(), key=lambda r: (not r.visible, r.id)):
+            if r.status == "unknown" and not r.visible:
+                continue
+            t = by_id.get(r.id)
+            exits.append({"id": r.id, "exit_sign": bool(t and t["signed"]),
+                          "status": r.status, "status_text": STATUS_TEXT[r.status],
+                          "since_s": round(now - r.since, 1), "blockers": r.blockers,
+                          "visible": r.visible})
+        return {"video_time_s": round(vt, 2), "fps": round(fps, 1), "exits": exits,
+                "events": [{"video_time_s": round(t, 2), "text": m, "status": st}
+                           for t, m, st in self.events[-20:]]}
 
     @staticmethod
     def _label(img, text, x, y, col, s, th):
@@ -586,6 +621,8 @@ class ExitMonitor:
 
         if self.locate:
             threading.Thread(target=self._la_worker, daemon=True).start()
+        # --stream: simple browser view (+ /stream/original, /stream/annotated, /state).
+        # The web app (frontend/) talks to the FastAPI backend instead (backend/).
         streamer = MJPEGStreamer(a.stream).start() if a.stream else None
         half = min(W, 800)
         out_w = 2 * half
@@ -597,7 +634,7 @@ class ExitMonitor:
         win = "Exit monitor (q: quit, space: pause)"
         times = []
         try:
-            while True:
+            while not self._halt.is_set():
                 idx, frame, skipped = src.read()
                 if frame is None:
                     break
@@ -659,8 +696,16 @@ class ExitMonitor:
                 top = cv2.resize(top, (out_w, out_h - 200), interpolation=cv2.INTER_AREA)
                 combined = cv2.vconcat([top, self._panel(out_w, now, vt, fps)])
 
+                if self.on_frame:
+                    try:
+                        self.on_frame(frame, annotated, combined, self._state(now, vt, fps))
+                    except Exception as e:
+                        print(f"  on_frame error: {e}")
                 if streamer:
-                    streamer.publish(combined)
+                    streamer.publish(combined)                       # /stream (all-in-one)
+                    streamer.publish(frame, "original")              # /stream/original
+                    streamer.publish(annotated, "annotated")         # /stream/annotated
+                    streamer.set_state(self._state(now, vt, fps))    # /state (JSON)
                 if writer:
                     for _ in range(skipped + 1):
                         writer.write(combined)
@@ -688,6 +733,10 @@ class ExitMonitor:
             self.confirm_pool.shutdown(wait=False, cancel_futures=True)
             self._report(out_dir, src, times)
 
+    def request_stop(self) -> None:
+        """Ask run() to finish after the current frame (thread-safe)."""
+        self._halt.set()
+
     def _report(self, out_dir: Path, src, times):
         exits = []
         for r in sorted(self.exits.values(), key=lambda r: r.id):
@@ -702,12 +751,14 @@ class ExitMonitor:
                "events": [{"video_time_s": round(t, 2), "event": m} for t, m, _ in self.events]}
         path = out_dir / "report.json"
         path.write_text(json.dumps(rep, indent=2))
+        self.report_path = path
         print(f"\n  {src.idx + 1} frames ({src.dropped} dropped) | fast loop "
               f"{rep['fast_loop_ms']} ms/frame | {len(exits)} exits | {len(self.events)} events")
         print(f"  Report: {path}")
 
 
-def _parse_args():
+def build_parser() -> argparse.ArgumentParser:
+    """CLI options; the backend uses the same parser for its defaults."""
     ap = argparse.ArgumentParser(description="Real-time exit / obstruction monitor")
     ap.add_argument("source", help="Video file, webcam index or stream URL")
     ap.add_argument("--locate-url", default=os.environ.get("LOCATE_URL"),
@@ -742,11 +793,11 @@ def _parse_args():
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--out-dir", default="results")
-    return ap.parse_args()
+    return ap
 
 
 def main():
-    args = _parse_args()
+    args = build_parser().parse_args()
     print(f"  LocateAnything: {args.locate_url or 'OFF'} | Qwen: {args.qwen_url or 'OFF'} | "
           f"YOLOE: {'OFF' if args.no_yoloe else args.yoloe_model}")
     ExitMonitor(args).run()

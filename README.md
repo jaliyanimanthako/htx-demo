@@ -127,6 +127,8 @@ engines/
   locate_engine.py   LocateAnything server client + answer parser
 server/              GPU-server scripts (setup, serve, run) — see below
 tests/test_core.py   offline tests for parsing / rules / LocateAnything output
+backend/             FastAPI service: sessions, MJPEG streams, WebSocket events, token auth
+frontend/            web app (index.html, style.css, app.js) — talks to backend/
 ```
 
 Outputs go to `results/` (git-ignored); model weights to `models/` (git-ignored).
@@ -194,6 +196,9 @@ bash server/serve_locate.sh               # GPU 1 by default, port 8020+ (first 
 
 Endpoints: `GET /health`, `POST /detect {image, categories, mode}`,
 `POST /ground {image, phrase}`. Boxes come back on a 0–1000 scale.
+
+**Backend for the web app** — see [Backend + web app](#backend--web-app-backend-frontend):
+`BACKEND_TOKEN=<secret> bash server/run_backend.sh` (in tmux, after `setup_monitor.sh`).
 
 **Optional — run the monitor on the server too**
 
@@ -269,6 +274,68 @@ newest frame as soon as the previous answer is back (and `--la-interval` has pas
 
 **Output** – `results/exit_monitor_<video>/report.json` (status history, blockers and a
 snapshot per exit, all events) and `exit<id>_<time>_<status>.jpg` snapshots.
+
+### Backend + web app (`backend/`, `frontend/`)
+
+The detection pipeline runs as a **FastAPI service on the GPU server**; the web app
+(on your Mac, or any browser) connects to it, starts / stops sessions and shows the two
+live frames. The detection code is the same as `exit_monitor.py`.
+
+```
+Mac: web app (frontend/)  ── HTTP + WebSocket ──►  GPU server: backend (FastAPI, :8100)
+                                                    └─ exit monitor pipeline: YOLOE (GPU 0)
+                                                       + Qwen :8010 + LocateAnything :8020
+```
+
+**On the server** (once: `bash server/setup_monitor.sh`, which also installs FastAPI):
+
+```bash
+tmux new -s backend
+BACKEND_TOKEN=<pick-a-secret> bash server/run_backend.sh     # port 8100 (or next free)
+```
+
+**On the Mac** — either open the app served by the backend:
+`http://<server-ip>:8100/?token=<secret>`, or run the frontend locally:
+
+```bash
+python3 -m http.server 5173 -d frontend
+# open http://localhost:5173/?api=http://<server-ip>:8100&token=<secret>
+```
+
+Then **Connect → pick a video → Start**. The status line shows model servers up/down,
+the running session, fps and exit statuses. **Left:** original frame and frame with
+bounding boxes. **Right:** checklist, pop-up and chat — *mockup only* for now; live
+events already arrive over the WebSocket (`onEvent` in `frontend/app.js`) for wiring it up.
+
+If the server port is not reachable from the Mac, tunnel it:
+`ssh -L 8100:localhost:8100 <user>@<server>` and use `http://localhost:8100`.
+
+| Endpoint | |
+|---|---|
+| `GET /api/health` | liveness, whether a token is required (no auth) |
+| `GET /api/info` | model servers up/down, videos, sessions |
+| `GET /api/videos` | videos a session can play (files in `BACKEND_VIDEO_DIR`) |
+| `POST /api/sessions` | start `{source, loop, use_yoloe, use_locate, use_qwen, options}` |
+| `GET /api/sessions`, `GET /api/sessions/{id}` | status + latest state (exits, blockers) |
+| `DELETE /api/sessions/{id}` | stop (report is written) |
+| `GET /api/sessions/{id}/stream/{original\|annotated\|combined}` | MJPEG streams |
+| `WS /api/sessions/{id}/events` | live `event` / `state` / `end` messages |
+| `GET /api/sessions/{id}/report` | `report.json` after the session ends |
+| `POST /api/sessions/{id}/command` | chat / commands — not implemented yet (501) |
+
+Interactive API docs: `http://<server-ip>:8100/docs`. `source` is a video file name in
+the server's video folder (default: the repo root) or an `rtsp://` URL.
+
+| Setting (env / `.env` on the server) | Default | |
+|---|---|---|
+| `BACKEND_TOKEN` | *(none)* | shared secret: `Authorization: Bearer <token>` or `?token=` — **set it** |
+| `BACKEND_CORS_ORIGINS` | `*` | origins allowed to call the API, e.g. `http://localhost:5173` |
+| `BACKEND_VIDEO_DIR` | repo root | where session videos are read from |
+| `BACKEND_MAX_SESSIONS` | `1` | concurrent sessions (one GPU pipeline) |
+| `LOCATE_URL`, `QWEN_URL` | from the port files | model servers (localhost on the server) |
+
+`exit_monitor.py --stream` still works for quick checks: an all-in-one browser view
+(`/stream`), plus `/stream/original`, `/stream/annotated` and `/state`.
 
 ### Other runners
 

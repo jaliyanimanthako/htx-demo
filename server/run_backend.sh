@@ -39,17 +39,43 @@ except Exception:
 PY
 }
 # Packages the backend needs (an env made before FastAPI was added lacks them)
-MISSING="$(python - <<'PY'
+# one package spec per line → array (specs like "clip @ https://…" contain spaces)
+SPECS="$(python - <<'PY'
 import importlib.util
 need = {"fastapi": "fastapi==0.121.3", "uvicorn": "uvicorn[standard]==0.38.0",
         "openai": "openai==2.26.0", "requests": "requests", "cv2": "opencv-python-headless",
-        "ultralytics": "ultralytics==8.4.176", "dotenv": "python-dotenv"}
-print(" ".join(f'"{pkg}"' for mod, pkg in need.items() if importlib.util.find_spec(mod) is None))
+        "ultralytics": "ultralytics==8.4.176", "dotenv": "python-dotenv",
+        "clip": 'clip @ https://github.com/ultralytics/CLIP/archive/refs/heads/main.zip'}   # YOLOE text prompts (no git needed)
+for mod, pkg in need.items():
+    if importlib.util.find_spec(mod) is None:
+        print(pkg)
 PY
 )"
-if [ -n "$MISSING" ]; then
-  echo "Installing missing packages into $(python -c 'import sys; print(sys.prefix)'): $MISSING"
-  eval "pip_into \"$(command -v python)\" $MISSING"
+MISSING=()
+while IFS= read -r spec; do [ -n "$spec" ] && MISSING+=("$spec"); done <<< "$SPECS"
+if [ ${#MISSING[@]} -gt 0 ]; then
+  echo "Installing missing packages into $(python -c 'import sys; print(sys.prefix)'): ${MISSING[*]}"
+  pip_into "$(command -v python)" "${MISSING[@]}"
+  if ! python -c "import fastapi, uvicorn, openai, requests, cv2, ultralytics, dotenv, clip" 2>/dev/null; then
+    echo "Some backend packages still do not import — rebuilding the environment."
+    set_aside "$ENV_DIR/.venv"
+    ENV_DIR="$ENV_DIR" bash "$ROOT/server/setup_monitor.sh"
+    # shellcheck disable=SC1091
+    source "$ENV_DIR/.venv/bin/activate"
+  fi
+fi
+
+# YOLOE weights + text encoder: download now, not inside the first Start request
+if [ ! -f "$ROOT/models/yoloe-11s-seg.pt" ] || [ ! -f "$ROOT/models/mobileclip_blt.ts" ]; then
+  echo "Downloading YOLOE weights + text encoder into $ROOT/models (one time, ~600 MB)…"
+  mkdir -p "$ROOT/models"
+  (cd "$ROOT/models" && python - <<'PY'
+from ultralytics import YOLOE
+m = YOLOE("yoloe-11s-seg.pt")
+m.set_classes(["door"], m.get_text_pe(["door"]))
+print("YOLOE ready")
+PY
+  )
 fi
 
 # Token: use BACKEND_TOKEN, else the one in .env, else create one and save it in .env

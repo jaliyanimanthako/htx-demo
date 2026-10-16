@@ -22,12 +22,13 @@ Auth: if BACKEND_TOKEN is set, send "Authorization: Bearer <token>" or ?token=<t
 import asyncio
 import json
 import secrets
+import traceback
 import urllib.request
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,21 @@ from backend import settings
 from backend.sessions import STREAMS, SessionError, SessionManager, list_videos
 
 app = FastAPI(title="Exit Monitor backend", version="1.0")
+
+
+@app.middleware("http")
+async def report_errors(request: Request, call_next):
+    """Unexpected errors → JSON {"detail": "<Type>: <message>"} the web app can show,
+    full traceback in the backend log. Registered before CORS so the error response
+    still carries CORS headers (otherwise the browser hides it)."""
+    try:
+        return await call_next(request)
+    except Exception as e:
+        print(f"  ERROR {request.method} {request.url.path}:", flush=True)
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"detail": f"{type(e).__name__}: {e}"})
+
+
 app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS,
                    allow_methods=["*"], allow_headers=["*"])
 manager = SessionManager()

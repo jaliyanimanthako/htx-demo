@@ -29,8 +29,25 @@ $PIP install ultralytics==8.4.176 openai==2.26.0 requests python-dotenv pillow n
 # ultralytics pulls opencv-python (needs a display); swap in the headless build
 $PIP uninstall opencv-python 2>/dev/null || pip uninstall -y opencv-python || true
 $PIP install opencv-python-headless
-# YOLOE text prompts need OpenAI CLIP's tokenizer package
-$PIP install "git+https://github.com/ultralytics/CLIP.git"
+# YOLOE text prompts need OpenAI CLIP's tokenizer package — installed from the GitHub
+# zip, so the server does not need git
+$PIP install "clip @ https://github.com/ultralytics/CLIP/archive/refs/heads/main.zip"
+
+echo "== Check: every package the backend needs imports =="
+python - <<'PY'
+import importlib, sys
+bad = []
+for mod in ["torch", "cv2", "ultralytics", "clip", "fastapi", "uvicorn", "openai", "requests", "dotenv"]:
+    try:
+        importlib.import_module(mod)
+    except Exception as e:
+        bad.append(f"{mod} ({type(e).__name__}: {e})")
+import torch, ultralytics
+print("torch", torch.__version__, "| CUDA", torch.cuda.is_available(), "| ultralytics", ultralytics.__version__)
+if bad:
+    sys.exit("Setup incomplete — these do not import: " + ", ".join(bad))
+print("all packages OK")
+PY
 
 echo "== Download YOLOE weights + MobileCLIP text encoder into $ROOT/models =="
 mkdir -p "$ROOT/models"
@@ -42,10 +59,5 @@ m.set_classes(["door"], m.get_text_pe(["door"]))   # triggers the MobileCLIP dow
 print("YOLOE ready")
 PY
 
-python - <<'PY'
-import torch, cv2, ultralytics
-print("torch", torch.__version__, "| CUDA", torch.cuda.is_available(),
-      "| ultralytics", ultralytics.__version__, "| cv2", cv2.__version__)
-PY
 echo
 echo "Done. Next: bash server/run_backend.sh   (or: bash server/run_monitor.sh IMG_0451.MOV)"

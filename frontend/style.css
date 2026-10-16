@@ -101,9 +101,7 @@ html, body {
 
 .controls #api { flex: 2 1 220px; }
 .controls #token { flex: 1 1 120px; }
-.controls #video { flex: 1 1 140px; }
-
-.controls button {
+.controls button, .file-btn {
   padding: 8px 14px;
   border: 0;
   border-radius: 10px;
@@ -114,10 +112,19 @@ html, body {
   cursor: pointer;
 }
 
-.controls button.secondary {
+.controls button.danger { background: var(--bad); color: #fff; }
+
+.controls button.secondary, .file-btn {
   background: transparent;
   color: var(--text);
   border: 1.5px solid var(--border);
+}
+
+.file-btn {
+  padding: 6.5px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .controls button:disabled { opacity: 0.4; cursor: default; }
@@ -147,7 +154,7 @@ html, body {
   overflow: hidden;
 }
 
-.frame-box img {
+.frame-box video, .frame-box canvas {
   position: absolute;
   inset: 0;
   width: 100%;

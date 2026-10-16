@@ -305,6 +305,7 @@ class ExitMonitor:
         self.qwen_out = queue.Queue()
         self.pending = set()              # (job kind, track id) in flight
         self.full, self.full_scale = None, 1.0
+        self._last_size = None
         self._flog = {"la": [], "q_out": [], "q_in": []}   # per-frame log notes
         self._flog_lock = threading.Lock()
         self.lock = threading.Lock()
@@ -619,8 +620,7 @@ class ExitMonitor:
         print(f"  Source: {a.source} | {src.width}x{src.height} @ {src.fps:.1f} fps "
               f"(processing {W}x{H}) | output → {out_dir}\n")
 
-        if self.locate:
-            threading.Thread(target=self._la_worker, daemon=True).start()
+        self.start_workers()
         # --stream: simple browser view (+ /stream/original, /stream/annotated, /state).
         # The web app (frontend/) talks to the FastAPI backend instead (backend/).
         streamer = MJPEGStreamer(a.stream).start() if a.stream else None
@@ -640,52 +640,7 @@ class ExitMonitor:
                     break
                 t_frame = time.time()
                 vt = src.video_time()
-                self.full, self.full_scale = frame, 1.0 / scale
-                if scale < 1:
-                    frame = cv2.resize(frame, (W, H), interpolation=cv2.INTER_AREA)
-                now = time.time()
-
-                M, C = self._motion_step(frame)
-                self.tracker.predict(M)
-
-                fast_info, la_merged = None, 0
-                if self.fast:
-                    t_y = time.time()
-                    dets = self.fast(frame)
-                    fast_info = (len(dets), 1000 * (time.time() - t_y))
-                    doors = merge_double_doors([{"box": d["box"], "conf": 1.0, "signed": False,
-                                                 "weak": False} for d in dets if d["kind"] == "door"])
-                    dets = [d for d in dets if d["kind"] != "door"] + \
-                           [{"kind": "door", "label": "door", "box": d["box"]} for d in doors]
-                    self.tracker.update(dets, now, "fast")
-
-                if self.locate:
-                    with self.lock:
-                        self.la_in = (frame.copy(), C.copy(), W, H)
-                    while not self.la_out.empty():
-                        la_dets, C_ref, _ = self.la_out.get()
-                        la_merged += len(la_dets)
-                        M_la = (C @ np.linalg.inv(C_ref))
-                        s = self.motion.scale
-                        Mpx = (np.diag([1 / s, 1 / s, 1]) @ M_la @ np.diag([s, s, 1]))[:2].astype(np.float32)
-                        for d in la_dets:
-                            d["box"] = _warp(d["box"], Mpx)
-                        doors = merge_double_doors([{"box": d["box"], "conf": 1.0, "signed": False,
-                                                     "weak": False} for d in la_dets if d["kind"] == "door"])
-                        la_dets = [d for d in la_dets if d["kind"] != "door"] + \
-                                  [{"kind": "door", "label": "door", "box": d["box"]} for d in doors]
-                        self.tracker.update(la_dets, now, "la")
-
-                for old, new in self.tracker.consolidate().items():
-                    self.merged[old] = new
-                    if old in self.exits:            # keep the older exit record
-                        rec = self.exits.pop(old)
-                        if new not in self.exits:
-                            rec.id = new
-                            self.exits[new] = rec
-                self.tracker.prune(now, W, H)
-                self._apply_qwen(now, vt)
-                self._update_exits(frame, W, H, now, vt)
+                frame, fast_info, la_merged, now = self.step(frame, vt)
 
                 annotated = self._draw(frame, now)
                 times.append(time.time() - t_frame)
@@ -732,6 +687,118 @@ class ExitMonitor:
             self.qwen_pool.shutdown(wait=False, cancel_futures=True)
             self.confirm_pool.shutdown(wait=False, cancel_futures=True)
             self._report(out_dir, src, times)
+
+    # ── one frame (used by run() and by the backend's live mode) ─────────────
+    def start_workers(self) -> None:
+        """Start the LocateAnything worker (once)."""
+        if self.locate and not getattr(self, "_la_started", False):
+            threading.Thread(target=self._la_worker, daemon=True).start()
+            self._la_started = True
+
+    def step(self, frame, vt: float):
+        """
+        Process one full-resolution BGR frame shown at video time `vt`.
+        Returns (processed_frame, fast_info, la_merged, now); the results are in
+        self.tracker / self.exits (see live_result()).
+        """
+        H0, W0 = frame.shape[:2]
+        scale = min(1.0, self.args.proc_width / W0)
+        W, H = int(W0 * scale) // 2 * 2, int(H0 * scale) // 2 * 2
+        if self._last_size not in (None, (W, H)):
+            self.reset()                     # a different source → start over
+        self._last_size = (W, H)
+        self.full, self.full_scale = frame, 1.0 / scale
+        if (W, H) != (W0, H0):
+            frame = cv2.resize(frame, (W, H), interpolation=cv2.INTER_AREA)
+        now = time.time()
+
+        M, C = self._motion_step(frame)
+        self.tracker.predict(M)
+
+        fast_info, la_merged = None, 0
+        if self.fast:
+            t_y = time.time()
+            dets = self.fast(frame)
+            fast_info = (len(dets), 1000 * (time.time() - t_y))
+            doors = merge_double_doors([{"box": d["box"], "conf": 1.0, "signed": False,
+                                         "weak": False} for d in dets if d["kind"] == "door"])
+            dets = [d for d in dets if d["kind"] != "door"] + \
+                   [{"kind": "door", "label": "door", "box": d["box"]} for d in doors]
+            self.tracker.update(dets, now, "fast")
+
+        if self.locate:
+            with self.lock:
+                self.la_in = (frame.copy(), C.copy(), W, H)
+            while not self.la_out.empty():
+                la_dets, C_ref, _ = self.la_out.get()
+                la_merged += len(la_dets)
+                M_la = (C @ np.linalg.inv(C_ref))
+                s = self.motion.scale
+                Mpx = (np.diag([1 / s, 1 / s, 1]) @ M_la @ np.diag([s, s, 1]))[:2].astype(np.float32)
+                for d in la_dets:
+                    d["box"] = _warp(d["box"], Mpx)
+                doors = merge_double_doors([{"box": d["box"], "conf": 1.0, "signed": False,
+                                             "weak": False} for d in la_dets if d["kind"] == "door"])
+                la_dets = [d for d in la_dets if d["kind"] != "door"] + \
+                          [{"kind": "door", "label": "door", "box": d["box"]} for d in doors]
+                self.tracker.update(la_dets, now, "la")
+
+        for old, new in self.tracker.consolidate().items():
+            self.merged[old] = new
+            if old in self.exits:            # keep the older exit record
+                rec = self.exits.pop(old)
+                if new not in self.exits:
+                    rec.id = new
+                    self.exits[new] = rec
+        self.tracker.prune(now, W, H)
+        self._apply_qwen(now, vt)
+        self._update_exits(frame, W, H, now, vt)
+        return frame, fast_info, la_merged, now
+
+    def reset(self) -> None:
+        """Forget tracks and exits (new video / camera). Events and the report are kept."""
+        self.tracker = Tracker(ttl_la=max(4.0, 3 * self.args.la_interval))
+        self.exits, self.merged = {}, {}
+        self.motion, self.prev_C, self._last_size = None, None, None
+        with self.lock:
+            self.la_in = None
+        while not self.la_out.empty():
+            self.la_out.get_nowait()
+
+    def live_result(self, W: int, H: int) -> dict:
+        """Visible exits + the obstructions at them, boxes normalised to 0..1 (for the web app)."""
+        now = time.time()
+        by_id = {t["id"]: t for t in self.tracker.tracks}
+
+        def norm(b):
+            return [round(max(0.0, b[0]) / W, 4), round(max(0.0, b[1]) / H, 4),
+                    round(min(W, b[2]) / W, 4), round(min(H, b[3]) / H, 4)]
+
+        exits, obstacles = [], {}
+        for tid, rec in self.exits.items():
+            t = by_id.get(tid)
+            if not rec.visible or t is None:
+                continue
+            exits.append({"id": tid, "exit_sign": bool(t["signed"]), "confirmed": t["exit_ok"],
+                          "status": rec.status, "status_text": STATUS_TEXT[rec.status],
+                          "since_s": round(now - rec.since, 1), "blockers": rec.blockers,
+                          "box": norm(t["box"])})
+            for oid in rec.blocker_ids:
+                o = by_id.get(oid)
+                if o and o["depth"] != "furniture":
+                    obstacles[oid] = {"id": oid, "label": o["label"], "depth": o["depth"],
+                                      "exit_id": tid, "box": norm(o["box"])}
+        return {"exits": exits, "obstacles": list(obstacles.values())}
+
+    def shutdown(self, out_dir: Path, frames: int, dropped: int, times: list) -> None:
+        """Stop background work and write the report (for callers that drive step())."""
+        from types import SimpleNamespace
+        self.stop.set()
+        if self.assist:
+            self.assist.stop()
+        self.qwen_pool.shutdown(wait=False, cancel_futures=True)
+        self.confirm_pool.shutdown(wait=False, cancel_futures=True)
+        self._report(out_dir, SimpleNamespace(idx=frames - 1, dropped=dropped), times)
 
     def request_stop(self) -> None:
         """Ask run() to finish after the current frame (thread-safe)."""

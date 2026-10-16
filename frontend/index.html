@@ -8,37 +8,37 @@
 </head>
 <body>
   <main class="app">
-    <!-- ── Left: live frames from the Python detector ─────────────────────── -->
+    <!-- ── Left: video plays here locally; the server only returns boxes ───── -->
     <section class="frames">
-      <form class="panel controls" id="controls" onsubmit="return false">
+      <form class="panel controls" onsubmit="return false">
         <input id="api" type="url" placeholder="Backend URL, e.g. http://&lt;server-ip&gt;:8100" aria-label="Backend URL">
-        <input id="token" type="password" placeholder="Token (if set)" aria-label="Token">
+        <input id="token" type="password" placeholder="Token" aria-label="Token">
         <button id="connect" type="button">Connect</button>
-        <select id="video" aria-label="Video" disabled><option>— video —</option></select>
-        <button id="start" type="button" disabled>Start</button>
-        <button id="stop" type="button" class="secondary" disabled>Stop</button>
-        <p class="status" id="status">Not connected</p>
+        <label class="file-btn">Open video<input id="file" type="file" accept="video/*" hidden></label>
+        <button id="camera" type="button" class="secondary">Camera</button>
+        <button id="detect" type="button" disabled>Start detection</button>
+        <p class="status" id="status">Not connected — open a video any time; detection needs the backend.</p>
       </form>
 
       <article class="panel frame-panel">
         <header class="panel-head">
           <h2>Frame <span class="muted">(original)</span></h2>
-          <span class="conn" id="conn-original">idle</span>
+          <span class="conn" id="src-state">no video</span>
         </header>
-        <div class="frame-box">
-          <img id="img-original" alt="Original camera frame">
-          <p class="placeholder" id="ph-original">No session — connect and press Start</p>
+        <div class="frame-box" id="box-original">
+          <video id="video" muted playsinline controls></video>
+          <p class="placeholder">Open a video or start the camera</p>
         </div>
       </article>
 
       <article class="panel frame-panel">
         <header class="panel-head">
           <h2>Frame <span class="muted">(with bounding boxes)</span></h2>
-          <span class="conn" id="conn-annotated">idle</span>
+          <span class="conn" id="det-state">detection off</span>
         </header>
-        <div class="frame-box">
-          <img id="img-annotated" alt="Frame with detected exits and obstructions">
-          <p class="placeholder" id="ph-annotated">No session — connect and press Start</p>
+        <div class="frame-box" id="box-annotated">
+          <canvas id="overlay"></canvas>
+          <p class="placeholder">Boxes appear here when detection is running</p>
         </div>
       </article>
     </section>

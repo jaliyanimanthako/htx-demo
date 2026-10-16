@@ -12,6 +12,8 @@ FastAPI app
   GET    /api/sessions/{id}/stream/{name}    MJPEG: original | annotated | combined
   GET    /api/sessions/{id}/report           report.json once the session has ended
   WS     /api/sessions/{id}/events           pushes {"type": "event" | "state" | "end", ...}
+  WS     /api/live                           LIVE MODE: browser sends frames, gets JSON boxes
+                                             (see backend/live.py for the message format)
   POST   /api/sessions/{id}/command          chat / command box — not implemented yet (501)
   GET    /                                   the web app (frontend/), for convenience
 
@@ -112,7 +114,8 @@ def info():
                        "qwen": {"url_set": bool(settings.QWEN_URL),
                                 "up": _up(settings.QWEN_URL + "/models")}},
             "videos": list_videos(), "max_sessions": settings.MAX_SESSIONS,
-            "sessions": [s.info() for s in manager.sessions.values()]}
+            "sessions": [s.info() for s in manager.sessions.values()],
+            "live_sessions": [{"id": l.id, "frames": l.frames} for l in manager.live.values()]}
 
 
 @app.get("/api/videos", dependencies=[Depends(require_token)])
@@ -217,6 +220,72 @@ async def events(ws: WebSocket, sid: str, token: Optional[str] = None):
     except WebSocketDisconnect:
         pass
     finally:
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass
+
+
+@app.websocket("/api/live")
+async def live(ws: WebSocket, token: Optional[str] = None):
+    """
+    1. client → {"type": "start", "use_yoloe"?, "use_locate"?, "use_qwen"?, "options"?}
+       server → {"type": "ready", "id": ...}          (or {"type": "error", "detail": ...})
+    2. client → binary frame (uint32 seq | float64 video time | JPEG), one at a time
+       server → {"type": "result", "seq", "t", "exits": [...], "obstacles": [...],
+                 "events": [...new...], "proc_ms", ...}   boxes are 0..1 of the frame
+    3. client → {"type": "reset"} (new video) or {"type": "stop"}
+    """
+    if not _token_ok(token):
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    session = None
+    try:
+        start = await ws.receive_json()
+        if start.get("type") != "start":
+            await ws.send_json({"type": "error", "detail": "first message must be {type: start}"})
+            return
+        try:
+            session = await asyncio.to_thread(
+                manager.create_live, start.get("use_yoloe", True), start.get("use_locate", True),
+                start.get("use_qwen", True), start.get("options") or {})
+        except Exception as e:
+            await ws.send_json({"type": "error", "detail": f"{type(e).__name__}: {e}"})
+            return
+        await ws.send_json({"type": "ready", "id": session.id,
+                            "models": {"yoloe": not session.args.no_yoloe,
+                                       "locate_anything": bool(session.args.locate_url),
+                                       "qwen": bool(session.args.qwen_url)},
+                            "skipped": session.skipped})
+        while True:
+            msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                break
+            if msg.get("bytes") is not None:
+                try:
+                    result = await asyncio.to_thread(session.process, msg["bytes"])
+                except ValueError as e:
+                    result = {"type": "error", "detail": str(e)}
+                await ws.send_json(result)
+            elif msg.get("text"):
+                cmd = json.loads(msg["text"]).get("type")
+                if cmd == "reset":
+                    await asyncio.to_thread(session.reset)
+                    await ws.send_json({"type": "reset_done"})
+                elif cmd == "stop":
+                    break
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            await ws.send_json({"type": "error", "detail": f"{type(e).__name__}: {e}"})
+        except Exception:
+            pass
+    finally:
+        if session:
+            await asyncio.to_thread(manager.close_live, session)
         try:
             await ws.close()
         except RuntimeError:

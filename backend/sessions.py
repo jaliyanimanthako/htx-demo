@@ -141,6 +141,7 @@ class Session:
 class SessionManager:
     def __init__(self):
         self.sessions: dict = {}
+        self.live: dict = {}                # live (browser-fed) sessions, see backend/live.py
         self._lock = threading.Lock()
         self._fast = None                   # YOLOE loaded once, shared by sessions
 
@@ -152,7 +153,7 @@ class SessionManager:
     def create(self, source: str, loop: bool = True, use_yoloe: bool = True,
                use_locate: bool = True, use_qwen: bool = True, options: dict = None) -> Session:
         with self._lock:
-            running = [s for s in self.sessions.values() if not s.done]
+            running = [s for s in self.sessions.values() if not s.done] + list(self.live.values())
             if len(running) >= settings.MAX_SESSIONS:
                 raise SessionError(f"already running: {', '.join(s.id for s in running)} "
                                    f"(max {settings.MAX_SESSIONS}) — stop it first")
@@ -160,6 +161,24 @@ class SessionManager:
             session = Session(source, loop, use_yoloe, use_locate, use_qwen, options or {}, fast)
             self.sessions[session.id] = session
         return session.start()
+
+    def create_live(self, use_yoloe=True, use_locate=True, use_qwen=True, options=None):
+        from backend.live import LiveSession
+        with self._lock:
+            running = [s for s in self.sessions.values() if not s.done] + list(self.live.values())
+            if len(running) >= settings.MAX_SESSIONS:
+                raise SessionError(f"already running: {', '.join(s.id for s in running)} "
+                                   f"(max {settings.MAX_SESSIONS}) — stop it first")
+            fast = self._fast_detector() if use_yoloe else None
+        live = LiveSession(fast, use_yoloe, use_locate, use_qwen, options)
+        with self._lock:
+            self.live[live.id] = live
+        return live
+
+    def close_live(self, live) -> None:
+        with self._lock:
+            self.live.pop(live.id, None)
+        live.close()
 
     def get(self, sid: str) -> Session:
         return self.sessions.get(sid)

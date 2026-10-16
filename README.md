@@ -127,7 +127,7 @@ engines/
   locate_engine.py   LocateAnything server client + answer parser
 server/              GPU-server scripts: start_all.sh / status.sh / stop_all.sh, setup, serve
 tests/test_core.py   offline tests for parsing / rules / LocateAnything output
-backend/             FastAPI service: sessions, MJPEG streams, WebSocket events, token auth
+backend/             FastAPI service: live mode (frames in, boxes out), sessions, token auth
 frontend/            web app (index.html, style.css, app.js) — talks to backend/
 ```
 
@@ -302,24 +302,27 @@ snapshot per exit, all events) and `exit<id>_<time>_<status>.jpg` snapshots.
 
 ### Backend + web app (`backend/`, `frontend/`)
 
-The detection pipeline runs as a **FastAPI service on the GPU server**; the web app
-(on your Mac, or any browser) connects to it, starts / stops sessions and shows the two
-live frames. The detection code is the same as `exit_monitor.py`.
+The detection pipeline runs as a **FastAPI service on the GPU server**; the web app runs
+in the browser on your Mac. The detection code is the same as `exit_monitor.py`.
+
+**Live mode (default).** The video plays **in the browser**, from a local file or the
+camera. The web app sends small JPEG frames (960 px wide) to the server over one
+WebSocket; the server sends back **only JSON**: exit and obstruction boxes, statuses and
+events. The browser draws the boxes over its own video, so playback never waits for the
+network. It keeps one frame in flight at a time (at most 15 per second), so frames never
+queue up. On the same network, expect a round trip of about 50–70 ms, or about 13–15
+results per second.
 
 ```
-Mac: web app (frontend/)  ── HTTP + WebSocket ──►  GPU server: backend (FastAPI, :8100)
-                                                    └─ exit monitor pipeline: YOLOE (GPU 0)
-                                                       + Qwen :8010 + LocateAnything :8020
+Mac browser: video ─► JPEG frames ──WS /api/live──►  GPU server: backend (FastAPI, :8100)
+             boxes ◄── JSON (boxes, statuses) ◄──     └─ YOLOE + LocateAnything + Qwen
 ```
 
-**On the server** (once: `bash server/setup_monitor.sh`, which also installs FastAPI):
+**On the server:** run `bash server/start_all.sh`. It starts Qwen, LocateAnything and
+the backend, and prints the address with the token. To start only the backend, run
+`bash server/run_backend.sh`.
 
-```bash
-tmux new -s backend
-BACKEND_TOKEN=<pick-a-secret> bash server/run_backend.sh     # port 8100 (or next free)
-```
-
-**On the Mac** — either open the app served by the backend:
+**On the Mac**, either open the app served by the backend at
 `http://<server-ip>:8100/?token=<secret>`, or run the frontend locally:
 
 ```bash
@@ -327,13 +330,34 @@ python3 -m http.server 5173 -d frontend
 # open http://localhost:5173/?api=http://<server-ip>:8100&token=<secret>
 ```
 
-Then **Connect → pick a video → Start**. The status line shows model servers up/down,
-the running session, fps and exit statuses. **Left:** original frame and frame with
-bounding boxes. **Right:** checklist, pop-up and chat — *mockup only* for now; live
-events already arrive over the WebSocket (`onEvent` in `frontend/app.js`) for wiring it up.
+Then click **Connect**, then **Open video** (or **Camera**), then **Start detection**:
 
-If the server port is not reachable from the Mac, tunnel it:
-`ssh -L 8100:localhost:8100 <user>@<server>` and use `http://localhost:8100`.
+- **Status line:** which models are in use, results per second, round-trip time
+  (and the server's share of it), exit statuses and the last event.
+- **Down model servers:** a server that is down is skipped and reported, rather than
+  failing the session.
+- **New video:** opening another video resets the exit memory on the server.
+- **Left side:** the original video, and the video with bounding boxes.
+- **Right side:** the checklist, pop-up and chat are a *mockup only* for now. Live events
+  already arrive (`onEvent` in `frontend/app.js`), ready to wire up.
+
+Notes:
+
+- **Playing `.MOV` files:** iPhone `.MOV` files (HEVC) play in Safari and Chrome on
+  macOS. If a browser can't play a file, convert it first:
+  `ffmpeg -i in.MOV -c:v libx264 -pix_fmt yuv420p out.mp4`.
+- **Camera:** the browser allows camera access only on `https://` or `localhost`. Use
+  the local frontend (`localhost:5173`) or the SSH tunnel below.
+- **Unreachable port:** if the server port can't be reached from the Mac, tunnel it with
+  `ssh -L 8100:localhost:8100 <user>@<server>` and use `http://localhost:8100`.
+
+**Server-video sessions (older mode).** In this mode the server reads a video from its
+own disk and streams MJPEG frames back (`/api/sessions…` below). It is useful for
+recording and reports, but it lags over a slow link.
+
+Live frame message (a binary WebSocket message, little-endian): `uint32 seq`, then
+`float64 video_time_s`, then the JPEG bytes. Box coordinates in the replies are
+fractions of the frame, from 0 to 1.
 
 | Endpoint | |
 |---|---|
@@ -345,6 +369,7 @@ If the server port is not reachable from the Mac, tunnel it:
 | `DELETE /api/sessions/{id}` | stop (report is written) |
 | `GET /api/sessions/{id}/stream/{original\|annotated\|combined}` | MJPEG streams |
 | `WS /api/sessions/{id}/events` | live `event` / `state` / `end` messages |
+| `WS /api/live` | **live mode**: `{type:"start"}` → `ready`; binary frame → `result` (exits, obstacles, events); `{type:"reset"}`, `{type:"stop"}` |
 | `GET /api/sessions/{id}/report` | `report.json` after the session ends |
 | `POST /api/sessions/{id}/command` | chat / commands — not implemented yet (501) |
 
@@ -356,7 +381,7 @@ the server's video folder (default: the repo root) or an `rtsp://` URL.
 | `BACKEND_TOKEN` | *(none)* | shared secret: `Authorization: Bearer <token>` or `?token=` — **set it** |
 | `BACKEND_CORS_ORIGINS` | `*` | origins allowed to call the API, e.g. `http://localhost:5173` |
 | `BACKEND_VIDEO_DIR` | repo root | where session videos are read from |
-| `BACKEND_MAX_SESSIONS` | `1` | concurrent sessions (one GPU pipeline) |
+| `BACKEND_MAX_SESSIONS` | `1` | concurrent sessions, live ones included (one GPU pipeline) |
 | `LOCATE_URL`, `QWEN_URL` | from the port files | model servers (localhost on the server) |
 
 `exit_monitor.py --stream` still works for quick checks: an all-in-one browser view
@@ -449,6 +474,8 @@ has not been benchmarked yet.
 | `nvcc fatal: Unknown option '--compress-mode=size'` | FlashInfer JIT with an old system CUDA → `serve_qwen.sh` sets `VLLM_USE_FLASHINFER_SAMPLER=0`. |
 | All results `exits=0` with Qwen-4B | The model answered in its own JSON layout → handled by `core/parsing.py`; make sure the client code is up to date. |
 | `Qwen assist: OFF` | `--qwen-url` not given and `QWEN_URL` not in `.env`. |
+| Web app: video doesn't play | Browser can't decode the file (often HEVC outside macOS) → `ffmpeg -i in.MOV -c:v libx264 -pix_fmt yuv420p out.mp4` |
+| Web app: "Qwen down — skipped" | Live mode carries on without that model; start it (`bash server/start_all.sh`) and press Start detection again. |
 | Browser view not reachable | `ssh -L 8090:localhost:8090 <user>@<server>` → `http://localhost:8090`. |
 | LocateAnything setup fails at the PyTorch step | `TORCH_INDEX=https://download.pytorch.org/whl/cu121 bash server/setup_locate.sh` |
 

@@ -27,6 +27,17 @@ case "${1:-4b}" in
   *)       MODEL="$1" ;;   # any other HF model id
 esac
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$HERE/_lib.sh"
+# First run (or a broken env): set it up automatically
+if [ -x "$ENV_DIR/.venv/bin/python" ] && ! "$ENV_DIR/.venv/bin/python" -c "import vllm" 2>/dev/null; then
+  set_aside "$ENV_DIR/.venv"
+fi
+if [ ! -x "$ENV_DIR/.venv/bin/python" ]; then
+  echo "vLLM environment not found — setting it up (one time, several minutes)…"
+  ENV_DIR="$ENV_DIR" bash "$HERE/setup_vllm.sh"
+fi
 # shellcheck disable=SC1091
 source "$ENV_DIR/.venv/bin/activate"
 

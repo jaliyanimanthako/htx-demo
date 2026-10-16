@@ -3,7 +3,9 @@ Run the backend:   python -m backend [--host 0.0.0.0] [--port 8100]
 """
 
 import argparse
+import os
 import socket
+from pathlib import Path
 
 import uvicorn
 
@@ -29,6 +31,12 @@ def main():
 
     from backend import settings
     port = _free_port(args.port)
+    port_file = Path(os.environ.get("BACKEND_PORT_FILE", Path.home() / "exit-monitor" / "port"))
+    try:
+        port_file.parent.mkdir(parents=True, exist_ok=True)
+        port_file.write_text(str(port))
+    except OSError:
+        pass
     print(flush=True)
     print(f"  Backend      : http://<this-host>:{port}   (API docs: /docs, web app: /)")
     print(f"  Models       : LocateAnything {settings.LOCATE_URL} | Qwen {settings.QWEN_URL}")

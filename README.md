@@ -125,7 +125,7 @@ core/                shared library (no entry points)
 engines/
   qwen_engine.py     OpenAI-compatible VLM client (vLLM, OpenRouter, DashScope, OpenAI)
   locate_engine.py   LocateAnything server client + answer parser
-server/              GPU-server scripts (setup, serve, run) — see below
+server/              GPU-server scripts: start_all.sh / status.sh / stop_all.sh, setup, serve
 tests/test_core.py   offline tests for parsing / rules / LocateAnything output
 backend/             FastAPI service: sessions, MJPEG streams, WebSocket events, token auth
 frontend/            web app (index.html, style.css, app.js) — talks to backend/
@@ -165,8 +165,33 @@ git pull
 
 The repo contains code only. Test videos, model weights and `.env` are git-ignored, so
 copy a video over once (`scp IMG_0451.MOV <user>@<server>:~/qwe/`) — the weights
-download automatically on first use. The server needs no `.env` for the model servers;
-`server/run_monitor.sh` finds them on `localhost`.
+download automatically on first use.
+
+**Quick start — one command** (recommended):
+
+```bash
+cd ~/qwe
+bash server/start_all.sh          # QWEN_MODEL=8b-fp8 bash server/start_all.sh for another model
+```
+
+It does everything a new user would otherwise do by hand:
+- creates the three Python environments on first run (~20–30 min: PyTorch + model
+  weights) and installs anything missing later — broken envs are moved aside and rebuilt;
+- starts Qwen, LocateAnything and the backend, each in a tmux session (`qwen`, `locate`,
+  `backend`) — or as background processes if tmux is not installed — logging to `logs/`;
+- creates a backend token in `.env` if there is none;
+- waits until all three answer and prints the address to open on your Mac
+  (`http://<server-ip>:<port>/?token=…`).
+
+Services that are already running are left alone, so it is safe to run again.
+
+```bash
+bash server/status.sh             # what is up, ports, GPU memory
+bash server/stop_all.sh           # stop everything   (or: stop_all.sh backend)
+tmux attach -t backend            # watch a service (Ctrl+B then D to leave)
+```
+
+The sections below are the same steps done manually.
 
 Each model gets its **own Python environment** (their pinned packages conflict).
 Start servers inside **tmux** so they survive logging out

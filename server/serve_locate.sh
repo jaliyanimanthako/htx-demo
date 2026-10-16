@@ -15,15 +15,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Use the LocateAnything env's own interpreter — never whatever "python" is on PATH
 # (a system Anaconda torch fails with e.g. "libcudnn.so.8: cannot open shared object file")
+# shellcheck disable=SC1091
+source "$HERE/_lib.sh"
 PY="$ENV_DIR/.venv/bin/python"
+if [ -x "$PY" ] && ! "$PY" -c "import torch, transformers, fastapi, uvicorn" 2>/dev/null; then
+  set_aside "$ENV_DIR/.venv"                 # incomplete / broken → rebuild
+fi
 if [ ! -x "$PY" ]; then
-  echo "LocateAnything env not found: $PY"
-  echo "Create it first:  bash server/setup_locate.sh      (or set ENV_DIR=<path to the env's parent>)"
-  exit 1
+  echo "LocateAnything environment not found — setting it up (one time, ~10 min, ~8 GB)…"
+  ENV_DIR="$ENV_DIR" bash "$HERE/setup_locate.sh"
 fi
 if ! "$PY" -c "import torch, transformers" 2>/dev/null; then
-  echo "LocateAnything env at $ENV_DIR/.venv is incomplete (torch / transformers missing)."
-  echo "Rebuild it:  rm -rf $ENV_DIR/.venv && bash server/setup_locate.sh"
+  echo "LocateAnything environment is still not usable — see the setup output above."
   exit 1
 fi
 echo "Python: $PY ($("$PY" -c 'import torch, transformers; print("torch", torch.__version__, "| transformers", transformers.__version__)'))"

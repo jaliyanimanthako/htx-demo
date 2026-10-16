@@ -48,7 +48,7 @@ launch() {
   local name cmd pfile hpath
   name="$(field "$1" 1)"; cmd="$(field "$1" 2)"; pfile="$(field "$1" 3)"; hpath="$(field "$1" 4)"
   if healthy "$pfile" "$hpath"; then
-    echo "  $name: already running (port $(cat "$pfile"))"
+    ui_ok "$name" "already running ${C_DIM}· port $(cat "$pfile")${C_OFF}"
     return
   fi
   rm -f "$pfile"
@@ -58,63 +58,85 @@ launch() {
     tmux kill-session -t "$name" 2>/dev/null
     tmux new-session -d -s "$name"
     tmux send-keys -t "$name" "$line" Enter          # runs in a normal login shell
-    echo "  $name: started in tmux session '$name'"
+    ui_info "$name launched in tmux session '$name'"
   else
     nohup setsid bash -ic "$line" >/dev/null 2>&1 &
     echo $! > "$LOG_DIR/$name.pid"
-    echo "  $name: started in the background (pid $(cat "$LOG_DIR/$name.pid"))"
+    ui_info "$name launched in the background (pid $(cat "$LOG_DIR/$name.pid"))"
   fi
 }
 
+show_errors() {   # first error-looking lines + the tail of a log
+  local log="$1"
+  printf '%s    error lines in %s:%s\n' "$C_DIM" "$log" "$C_OFF"
+  grep -n -i -m 8 -E "error|exception|traceback|failed|denied|not found" "$log" \
+    | grep -v "__EXITED__" | cut -c1-160 | sed 's/^/      /'
+  printf '%s    last lines:%s\n' "$C_DIM" "$C_OFF"
+  tail -n 12 "$log" | grep -v "__EXITED__" | cut -c1-160 | sed 's/^/      /'
+}
+
 wait_for() {
-  local name pfile hpath timeout start last=0
+  local name pfile hpath timeout start now tick=0 msg="" last_plain=0
   name="$(field "$1" 1)"; pfile="$(field "$1" 3)"; hpath="$(field "$1" 4)"; timeout="$(field "$1" 5)"
   start=$(date +%s)
   while true; do
-    if healthy "$pfile" "$hpath"; then
-      echo "  ✓ $name is up (port $(cat "$pfile"), $(( $(date +%s) - start ))s)"
-      return 0
+    now=$(( $(date +%s) - start ))
+    if [ $(( tick % 20 )) -eq 0 ]; then            # check every ~2 s
+      if healthy "$pfile" "$hpath"; then
+        ui_ok "$name" "up ${C_DIM}· port $(cat "$pfile") · $(mmss "$now")${C_OFF}"
+        return 0
+      fi
+      if ! running "$name"; then
+        ui_fail "$name" "stopped after $(mmss "$now")"
+        show_errors "$LOG_DIR/$name.log"
+        return 1
+      fi
+      if [ "$now" -ge "$timeout" ]; then
+        ui_fail "$name" "not ready after $(mmss "$timeout") — see $LOG_DIR/$name.log"
+        return 1
+      fi
+      msg="$(last_log_line "$LOG_DIR/$name.log")"
     fi
-    if ! running "$name"; then
-      echo "  ✗ $name stopped. Last lines of $LOG_DIR/$name.log:"
-      tail -n 25 "$LOG_DIR/$name.log" | sed 's/^/      /'
-      return 1
+    if [ "$UI_TTY" = 1 ]; then
+      ui_spin "$tick" "$name" "$(mmss "$now")" "${msg:-starting…}"
+    elif [ $(( now - last_plain )) -ge 30 ]; then  # log files: a plain line every 30 s
+      last_plain=$now
+      echo "    … $name still starting ($(mmss "$now")): ${msg:0:110}"
     fi
-    local now=$(( $(date +%s) - start ))
-    if [ "$now" -ge "$timeout" ]; then
-      echo "  ✗ $name not ready after ${timeout}s — see $LOG_DIR/$name.log"
-      return 1
-    fi
-    if [ $(( now - last )) -ge 30 ]; then
-      last=$now
-      echo "    … $name still starting (${now}s): $(tail -n 1 "$LOG_DIR/$name.log" 2>/dev/null | cut -c1-110)"
-    fi
-    sleep 5
+    sleep 0.1
+    tick=$(( tick + 1 ))
   done
 }
 
-echo "== Starting (logs in $LOG_DIR) =="
+ui_head "Starting services  ${C_DIM}(logs: $LOG_DIR)${C_OFF}"
 launch "${SERVICES[0]}"
 launch "${SERVICES[1]}"
-echo
-echo "== Waiting for the model servers (first run downloads environments + weights) =="
+
+ui_head "Waiting for the model servers  ${C_DIM}(first run also builds environments + downloads weights)${C_OFF}"
 ok=1
 wait_for "${SERVICES[0]}" || ok=0
 wait_for "${SERVICES[1]}" || ok=0
-[ "$ok" = 1 ] || echo "  (continuing — the backend still starts; sessions need the model servers)"
-echo
+[ "$ok" = 1 ] || ui_warn "continuing — the backend still starts, but sessions need the model servers"
+
+ui_head "Backend"
 launch "${SERVICES[2]}"
-wait_for "${SERVICES[2]}" || { echo; echo "Backend did not start — fix the error above and rerun."; exit 1; }
+wait_for "${SERVICES[2]}" || { echo; ui_warn "Backend did not start — fix the error above and rerun."; exit 1; }
 
 TOKEN="$(grep -E '^BACKEND_TOKEN=' "$ROOT/.env" 2>/dev/null | tail -n 1 | cut -d= -f2-)"
 PORT="$(cat "$HOME/exit-monitor/port")"
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+URL="http://${IP:-<server-ip>}:$PORT/?token=${TOKEN:-<token>}"
+BAR="$(printf '─%.0s' $(seq 1 64))"
 echo
-echo "================================================================"
-echo " Ready. On your Mac open:"
-echo "   http://${IP:-<server-ip>}:$PORT/?token=${TOKEN:-<token>}"
-echo " (not reachable? ssh -L $PORT:localhost:$PORT <user>@<server>, then http://localhost:$PORT/?token=…)"
-echo
-echo " Status: bash server/status.sh    Stop: bash server/stop_all.sh"
-[ "$USE_TMUX" = 1 ] && echo " Look at a service: tmux attach -t qwen | locate | backend  (Ctrl+B then D to leave)"
-echo "================================================================"
+printf '%s%s%s\n' "$C_GREEN" "$BAR" "$C_OFF"
+if [ "$ok" = 1 ]; then
+  printf '  %s%s All services are up.%s Open on your Mac:\n' "$C_GREEN$C_BOLD" "$UI_OK" "$C_OFF"
+else
+  printf '  %sBackend is up, but a model server failed (see above).%s Open on your Mac:\n' "$C_YELLOW" "$C_OFF"
+fi
+printf '\n    %s%s%s\n\n' "$C_BOLD$C_CYAN" "$URL" "$C_OFF"
+printf '  %snot reachable? ssh -L %s:localhost:%s <user>@<server>  →  http://localhost:%s/?token=…%s\n' \
+  "$C_DIM" "$PORT" "$PORT" "$PORT" "$C_OFF"
+printf '  %sstatus: bash server/status.sh   ·   stop: bash server/stop_all.sh%s\n' "$C_DIM" "$C_OFF"
+[ "$USE_TMUX" = 1 ] && printf '  %swatch a service: tmux attach -t qwen | locate | backend  (Ctrl+B then D)%s\n' "$C_DIM" "$C_OFF"
+printf '%s%s%s\n' "$C_GREEN" "$BAR" "$C_OFF"

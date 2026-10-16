@@ -10,20 +10,15 @@ set -euo pipefail
 ENV_DIR="${ENV_DIR:-$HOME/exit-monitor}"
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu124}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/server/_lib.sh"
 mkdir -p "$ENV_DIR"
 
-if command -v uv >/dev/null 2>&1; then
-  uv venv --python 3.11 "$ENV_DIR/.venv"
-  # shellcheck disable=SC1091
-  source "$ENV_DIR/.venv/bin/activate"
-  PIP="uv pip"
-else
-  python3 -m venv "$ENV_DIR/.venv"
-  # shellcheck disable=SC1091
-  source "$ENV_DIR/.venv/bin/activate"
-  pip install -U pip
-  PIP="pip"
-fi
+echo "== Creating the environment (Python 3.11, via uv) =="
+new_venv "$ENV_DIR/.venv" 3.11
+# shellcheck disable=SC1091
+source "$ENV_DIR/.venv/bin/activate"
+PIP="$(ensure_uv) pip"
 
 echo "== PyTorch ($TORCH_INDEX) =="
 $PIP install torch torchvision --index-url "$TORCH_INDEX"

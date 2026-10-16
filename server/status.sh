@@ -17,10 +17,12 @@ show() {   # show <name> <port file> <health path>
   elif [ -f "$ROOT/logs/$1.pid" ] && kill -0 "$(cat "$ROOT/logs/$1.pid")" 2>/dev/null; then
     where="pid $(cat "$ROOT/logs/$1.pid")"
   fi
-  printf "  %-8s %-5s port %-6s %s\n" "$1" "$state" "$port" "$where"
+  local col="$C_RED"; [ "$state" = "up" ] && col="$C_GREEN"
+  printf "  %s%s%s %s%-8s%s %s%-5s%s port %-6s %s%s%s\n" "$col" "$UI_DOT" "$C_OFF" "$C_BOLD" "$1" "$C_OFF" \
+    "$col" "$state" "$C_OFF" "$port" "$C_DIM" "$where" "$C_OFF"
 }
 
-echo "Services:"
+ui_head "Services"
 show qwen    "$HOME/qwen-vllm/port"       /v1/models
 show locate  "$HOME/locate-anything/port" /health
 show backend "$HOME/exit-monitor/port"    /api/health

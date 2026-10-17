@@ -135,7 +135,7 @@ class Session:
                            "locate_anything": bool(self.args.locate_url),
                            "qwen": bool(self.args.qwen_url)},
                 "events": n_events, "state": state,
-                "report": str(report) if report else None}
+                "report_ready": bool(report)}      # GET …/report; no server paths to clients
 
 
 class SessionManager:

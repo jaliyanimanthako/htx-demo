@@ -467,6 +467,7 @@ class ExtinguisherMonitor:
             rec.status = status_for(rec.due, self.today, a.soon_days)
             rec.raw_dates = [f"{d['kind']} {d['raw']}" for d in best["dates"]]
             rec.dates = self._agreed_dates([r for r in dues if r["due"] == due])
+            rec.raw_dates = [f"{k} {v['raw']}" for k, v in rec.dates.items()]
             # explain the due date with the most explicit agreed date (next service written
             # on the tag beats "last service + 12 months" when both give the same date)
             agreed = [{"kind": k, "date": date.fromisoformat(v["date"]), "precision": v["precision"]}

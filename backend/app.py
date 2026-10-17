@@ -26,6 +26,7 @@ import json
 import secrets
 import traceback
 import urllib.request
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -160,6 +161,9 @@ def get_report(sid: str):
         raise HTTPException(409, "report is written when the session ends")
     report = json.loads(path.read_text())
     report["source"] = s.source_name           # don't expose server paths to clients
+    for e in report.get("exits", []):
+        if e.get("snapshot"):
+            e["snapshot"] = Path(e["snapshot"]).name
     return report
 
 

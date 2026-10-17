@@ -49,12 +49,18 @@
 
     <!-- ── Right: mockup only (not connected yet) ─────────────────────────── -->
     <aside class="side">
-      <article class="panel checklist-panel">
+      <article class="panel checklist-panel" id="side-panel">
         <header class="panel-head">
           <h2>Predefined checklist</h2>
-          <span class="badge">mockup</span>
+          <span class="badge" id="side-badge">mockup</span>
         </header>
         <ul class="checklist" id="checklist"></ul>
+
+        <!-- fire-extinguisher mode: one card per extinguisher seen (live) -->
+        <section class="ext-list" id="ext-list" hidden>
+          <h3>Extinguishers</h3>
+          <div id="ext-cards"></div>
+        </section>
 
         <div class="toast" id="toast" role="status">
           <span class="toast-dot"></span>

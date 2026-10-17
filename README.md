@@ -346,8 +346,21 @@ the **Token**, then click **Connect**. Pick a **mode**, then **Open video** (or
 
 The server tells the browser which frame size to send. Extinguisher mode needs full
 resolution to read the sticker, so it uses about 4× the bandwidth (fine on a LAN). If
-you switch mode while detecting, the app reconnects in the new mode. The right-side
-checklist (still a mockup) changes with the mode.
+you switch mode while detecting, the app reconnects in the new mode.
+
+**Right side in Fire extinguisher mode (live):**
+
+- **A card per extinguisher seen:**
+  - last service, next service and expiry ("not on tag" when missing);
+  - valid until, and why;
+  - a **SAFE TO USE / SAFE · SERVICE DUE SOON / NOT SAFE · OVERDUE / CHECK MANUALLY /
+    TAG NOT READ** badge;
+  - how many reads agree. A "?" means it is not confirmed yet.
+- **The checklist ticks itself:** extinguishers present, service tag readable, service
+  date not overdue (red if one is overdue). "Mounted and unobstructed" is still a mockup.
+- **The pop-up shows each status change.**
+
+In exit mode, the right side is still a mockup.
 
 - **Status line:** which models are in use, results per second, round-trip time
   (and the server's share of it), exit or extinguisher statuses, and the last event.

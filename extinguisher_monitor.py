@@ -40,7 +40,7 @@ from PIL import Image
 
 import core.config  # noqa: F401  (loads .env)
 from core.drawing import text_scale
-from core.expiry import STATUS_TEXT, assess, fmt_date, parse_answer, status_for
+from core.expiry import SAFETY, STATUS_TEXT, assess, fmt_date, parse_answer, reclassify, status_for
 from core.prompts import EXTINGUISHER_LOCATE_PROMPT, EXTINGUISHER_PROMPT, EXTINGUISHER_SYSTEM
 from core.qwen_assist import first_served_model
 from core.rules import box_iou, containment
@@ -249,6 +249,7 @@ class ExtRecord:
         self.reads: list = []
         self.status, self.due, self.basis, self.precision = "reading", None, None, None
         self.raw_dates: list = []        # what was read (for the panel / report)
+        self.dates: dict = {}            # kind → {"date", "text", "raw"} agreed by the reads
         self.reason = None               # why unreadable
         self.confirmed = False
         self.hint = None                 # "move closer" etc.
@@ -465,16 +466,43 @@ class ExtinguisherMonitor:
             rec.due, rec.basis, rec.precision = date.fromisoformat(due), best["basis"], best["precision"]
             rec.status = status_for(rec.due, self.today, a.soon_days)
             rec.raw_dates = [f"{d['kind']} {d['raw']}" for d in best["dates"]]
+            rec.dates = self._agreed_dates([r for r in dues if r["due"] == due])
+            # explain the due date with the most explicit agreed date (next service written
+            # on the tag beats "last service + 12 months" when both give the same date)
+            agreed = [{"kind": k, "date": date.fromisoformat(v["date"]), "precision": v["precision"]}
+                      for k, v in rec.dates.items()]
+            one = assess(agreed, self.today, a.service_months, a.life_years, a.soon_days)
+            if one["due"] == rec.due:
+                rec.basis, rec.precision = one["basis"], one["precision"]
             rec.confirmed = count >= 2
             rec.reason = None
         elif any(r["dates"] for r in rec.reads):
             rec.status = "unclear"
             last = next(r for r in reversed(rec.reads) if r["dates"])
             rec.raw_dates = [f"{d['kind']} {d['raw']}" for d in last["dates"]]
+            rec.dates = self._agreed_dates([last])
         else:
             rec.status, rec.reason = "unreadable", rec.reads[-1]["none"]
         if (rec.status, rec.due, rec.confirmed) != old:
             self._event(rec, vt)
+
+    def _agreed_dates(self, reads: list) -> dict:
+        """Per kind, the date most of these reads agree on → {kind: {date, text, raw}}."""
+        by_kind = {}
+        for r in reads:
+            ds = [{**d, "date": date.fromisoformat(d["date"])} for d in r["dates"]]
+            for d in reclassify(ds, self.today):
+                by_kind.setdefault(d["kind"], []).append(d)
+        out = {}
+        for kind, ds in by_kind.items():
+            top = Counter(d["date"] for d in ds).most_common(1)[0][0]
+            d = next(d for d in ds if d["date"] == top)
+            out[kind] = {"date": top.isoformat(), "text": fmt_date(top, d["precision"]),
+                         "raw": d["raw"], "precision": d["precision"]}
+        known = {v["date"] for k, v in out.items() if k != "UNKNOWN"}
+        if out.get("UNKNOWN", {}).get("date") in known:      # same date, words missed once
+            del out["UNKNOWN"]
+        return out
 
     def _describe(self, rec) -> str:
         if rec.status in ("valid", "expiring_soon", "expired"):
@@ -497,8 +525,23 @@ class ExtinguisherMonitor:
     def start_workers(self) -> None:
         """Nothing to start: reads run in the thread pool when needed."""
 
+    def _info(self, rec) -> dict:
+        safe, safe_text = SAFETY[rec.status]
+        return {"id": rec.id, "status": rec.status, "status_text": STATUS_TEXT[rec.status],
+                "safe": safe, "safe_text": safe_text, "confirmed": rec.confirmed,
+                "reading": rec.pending > 0, "visible": rec.visible,
+                "due": rec.due.isoformat() if rec.due else None,
+                "due_text": fmt_date(rec.due, rec.precision) if rec.due else None,
+                "basis": rec.basis, "dates": rec.dates, "dates_read": rec.raw_dates,
+                "reason": rec.reason, "reads": len(rec.reads),
+                "agree": sum(r["due"] == rec.due.isoformat() for r in rec.reads) if rec.due else 0,
+                "hint": rec.hint, "text": self._describe(rec)}
+
     def live_result(self, W: int, H: int) -> dict:
-        """Visible extinguishers, boxes normalised to 0..1 (for the web app)."""
+        """
+        extinguishers   the ones in view, with boxes normalised to 0..1 (drawn on the video)
+        inventory       every extinguisher seen in this session (the side panel)
+        """
         by_id = {t["id"]: t for t in self.tracker.tracks}
         out = []
         for tid, rec in sorted(self.recs.items()):
@@ -506,15 +549,11 @@ class ExtinguisherMonitor:
             if not rec.visible or t is None:
                 continue
             b = t["box"]
-            out.append({"id": tid, "status": rec.status, "status_text": STATUS_TEXT[rec.status],
-                        "confirmed": rec.confirmed, "reading": rec.pending > 0,
-                        "due": rec.due.isoformat() if rec.due else None,
-                        "due_text": fmt_date(rec.due, rec.precision) if rec.due else None,
-                        "basis": rec.basis, "dates_read": rec.raw_dates, "reason": rec.reason,
-                        "reads": len(rec.reads), "hint": rec.hint, "text": self._describe(rec),
+            out.append({**self._info(rec),
                         "box": [round(max(0.0, b[0]) / W, 4), round(max(0.0, b[1]) / H, 4),
                                 round(min(W, b[2]) / W, 4), round(min(H, b[3]) / H, 4)]})
-        return {"extinguishers": out}
+        return {"extinguishers": out,
+                "inventory": [self._info(r) for _, r in sorted(self.recs.items())]}
 
     def shutdown(self, out_dir: Path, frames: int, dropped: int, times: list) -> None:
         """Finish reads in flight and write the report (for callers that drive step())."""
@@ -698,6 +737,7 @@ class ExtinguisherMonitor:
         exts = []
         for r in sorted(self.recs.values(), key=lambda r: r.id):
             exts.append({"id": r.id, "status": r.status, "status_text": STATUS_TEXT[r.status],
+                         "safe": SAFETY[r.status][0], "safe_text": SAFETY[r.status][1], "dates": r.dates,
                          "due": r.due.isoformat() if r.due else None, "basis": r.basis,
                          "confirmed": r.confirmed, "dates_read": r.raw_dates, "reason": r.reason,
                          "first_seen_s": round(r.first_vt, 2), "last_seen_s": round(r.last_vt, 2),

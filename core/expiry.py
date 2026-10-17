@@ -23,6 +23,15 @@ from datetime import date
 
 KINDS = ("EXPIRY", "NEXT_SERVICE", "LAST_SERVICE", "MANUFACTURED", "UNKNOWN")
 NONE_REASONS = ("no_tag", "too_small", "blurry", "not_extinguisher")
+# "is it safe to use?" per status → (safe: True / False / None = unknown, text)
+SAFETY = {
+    "valid": (True, "Safe to use"),
+    "expiring_soon": (True, "Safe to use — service due soon"),
+    "expired": (False, "Not safe — overdue"),
+    "unclear": (None, "Unknown — check the date manually"),
+    "unreadable": (None, "Unknown — tag not read"),
+    "reading": (None, "Reading the tag…"),
+}
 STATUS_TEXT = {"reading": "READING", "valid": "VALID", "expiring_soon": "DUE SOON",
                "expired": "EXPIRED", "unclear": "CHECK DATE", "unreadable": "UNREADABLE"}
 
@@ -135,6 +144,13 @@ def _add_months(d: date, months: int) -> date:
     return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
 
 
+def reclassify(dates: list, today: date) -> list:
+    """A "last service" date after today cannot be one (the words were attached to the
+    wrong date) → it is the next-service date."""
+    return [{**d, "kind": "NEXT_SERVICE"} if d["kind"] == "LAST_SERVICE" and d["date"] > today
+            else d for d in dates]
+
+
 def due_date(dates: list, service_months: int = 12, life_years: int = 10, today: date = None):
     """
     The date the extinguisher stops being OK, and why:
@@ -147,8 +163,7 @@ def due_date(dates: list, service_months: int = 12, life_years: int = 10, today:
     were read.
     """
     if today:
-        dates = [{**d, "kind": "NEXT_SERVICE"} if d["kind"] == "LAST_SERVICE" and d["date"] > today
-                 else d for d in dates]
+        dates = reclassify(dates, today)
 
     def latest(kind):
         ds = [d for d in dates if d["kind"] == kind]

@@ -33,9 +33,10 @@ const MODES = {
     toast: "EXIT #9 is <strong>BLOCKED</strong> — chair, cardboard box",
   },
   extinguisher: {
+    // ticked live from the results (see updateExtPanel); the last one is still a mockup
     checklist: ["Extinguishers present", "Service tag readable", "Service date not overdue",
                 "Mounted and unobstructed"],
-    toast: "EXTINGUISHER #2 is <strong>EXPIRED</strong> — next service was 03/2026",
+    toast: "Point the camera at an extinguisher's service tag — results appear here",
   },
 };
 
@@ -49,9 +50,84 @@ function setMode(m) {
   modeInputs.forEach((i) => { i.checked = i.value === m; });
   // right side is a mockup: just show the checklist / pop-up text for this mode
   $("checklist").innerHTML = MODES[m].checklist
-    .map((t) => `<li><label><input type="checkbox" disabled> ${t}</label></li>`).join("");
+    .map((t) => `<li><label><input type="checkbox" tabindex="-1" onclick="return false"> ${t}</label></li>`)
+    .join("");                        // read-only (not disabled, so ticks show in colour)
   $("toast-text").innerHTML = MODES[m].toast;
+  $("toast").style.removeProperty("--toast");
+  const ext = m === "extinguisher";
+  $("side-panel").classList.toggle("ext-mode", ext);
+  $("ext-list").hidden = !ext;
+  $("side-badge").textContent = ext ? "live" : "mockup";
+  renderExtCards([]);
 }
+// ── fire-extinguisher side panel ────────────────────────────────────────────
+const EXT_STYLE = {   // status → card colour, badge text
+  valid: ["#16a34a", "SAFE TO USE"], expiring_soon: ["#f59e0b", "SAFE · SERVICE DUE SOON"],
+  expired: ["#dc2626", "NOT SAFE · OVERDUE"], unclear: ["#f59e0b", "CHECK MANUALLY"],
+  unreadable: ["#a855f7", "TAG NOT READ"], reading: ["#9ca3af", "READING…"],
+};
+const DATE_ROWS = [["LAST_SERVICE", "Last service"], ["NEXT_SERVICE", "Next service"],
+                   ["EXPIRY", "Expiry"], ["MANUFACTURED", "Manufactured"], ["UNKNOWN", "Other date"]];
+let lastCards = "";
+
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function extCard(x) {
+  const [color, badge] = EXT_STYLE[x.status] || EXT_STYLE.reading;
+  const dark = ["expiring_soon", "unclear", "reading"].includes(x.status) ? " dark" : "";
+  const sure = x.due && !x.confirmed ? "?" : "";
+  const rows = DATE_ROWS
+    .filter(([k]) => x.dates[k] || ["LAST_SERVICE", "NEXT_SERVICE", "EXPIRY"].includes(k))
+    .map(([k, name]) => x.dates[k]
+      ? `<dt>${name}</dt><dd>${esc(x.dates[k].text)}</dd>`
+      : `<dt>${name}</dt><dd class="none">not on tag</dd>`).join("");
+  const until = x.due_text ? `<dt>Valid until</dt><dd>end of ${esc(x.due_text)} <span class="none">(${esc(x.basis)})</span></dd>` : "";
+  let foot;
+  if (x.status === "reading") foot = x.hint ? `Waiting — ${esc(x.hint)}` : "Reading the service tag…";
+  else if (x.status === "unreadable") foot = `No date read (${esc(x.reason)}) · ${x.reads} reads — move closer and hold steady`;
+  else if (x.due) foot = `${x.confirmed ? "Confirmed" : "Not confirmed yet"} · ${x.agree} of ${x.reads} reads agree`;
+  else foot = `${x.reads} reads — the date's meaning is not written on the tag`;
+  if (x.reading) foot += " · reading…";
+  if (!x.visible) foot += " · out of view";
+  const body = x.reads && x.status !== "unreadable" ? `<dl>${rows}${until}</dl>` : "";
+  return `<article class="ext-card${x.visible ? "" : " gone"}" style="--st:${color}">
+    <header><strong>Extinguisher #${x.id}</strong><span class="safe-badge${dark}">${badge}${sure}</span></header>
+    <p class="safe-line">${esc(x.safe_text)}${sure ? " (not confirmed yet)" : ""}</p>
+    ${body}<footer>${foot}</footer></article>`;
+}
+
+function renderExtCards(inventory) {
+  const html = inventory.length
+    ? inventory.map(extCard).join("")
+    : `<p class="ext-empty">No extinguishers yet — point the camera at one and walk up to its service tag.</p>`;
+  if (html !== lastCards) {           // results come ~10×/s: only touch the DOM on change
+    $("ext-cards").innerHTML = html;
+    lastCards = html;
+  }
+}
+
+function updateExtPanel(r) {
+  const inv = r.inventory || [];
+  renderExtCards(inv);
+  const dated = inv.filter((x) => x.due);
+  const items = [...$("checklist").querySelectorAll("li")];
+  const set = (i, ok, fail = false) => {
+    items[i].querySelector("input").checked = ok;
+    items[i].classList.toggle("fail", fail);
+  };
+  set(0, inv.length > 0);
+  set(1, dated.length > 0);
+  set(2, dated.length > 0 && !dated.some((x) => x.status === "expired"),
+      dated.some((x) => x.status === "expired"));
+}
+
+function showToast(ev) {
+  const color = (EXT_STYLE[ev.status] || EXT_STYLE.reading)[0];
+  $("toast-text").textContent = ev.text;
+  $("toast").style.setProperty("--toast", color);
+  $("toast").hidden = false;
+}
+
 setMode(params.get("mode") || store.get("exitmon.mode") || "exits");
 
 const video = $("video");
@@ -87,7 +163,8 @@ function setPill(id, state, text) {
   $(id).className = `conn ${state}`;
   $(id).textContent = text;
 }
-const hasSource = () => Boolean(video.currentSrc || video.srcObject);
+// the src attribute, not currentSrc: currentSrc is filled in a moment after a file is chosen
+const hasSource = () => Boolean(video.getAttribute("src") || video.srcObject);
 
 function updateButtons() {
   $("detect").disabled = !connected || !hasSource();
@@ -122,6 +199,7 @@ function startDetection() {
   ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
   setPill("det-state", "", "starting…");
+  setStatus("Starting detection… (the first start loads the models, a few seconds)");
   const m = mode();
   ws.onopen = () => ws.send(JSON.stringify({ type: "start", mode: m }));
   ws.onmessage = (msg) => {
@@ -131,6 +209,7 @@ function startDetection() {
       inFlight = false;
       latest = null;
       lastEvent = null;
+      if (data.mode === "extinguisher") setMode("extinguisher");   // fresh panel + checklist
       sendWidth = data.send_width || 960;
       jpegQuality = data.jpeg_quality || 0.75;
       const names = { yoloe: "YOLOE", locate_anything: "LocateAnything", qwen: "Qwen" };
@@ -211,6 +290,10 @@ function onResult(r) {
   resultTimes.push(performance.now());
   while (resultTimes.length && performance.now() - resultTimes[0] > 2000) resultTimes.shift();
   (r.events || []).forEach(onEvent);
+  if (r.mode === "extinguisher") {
+    updateExtPanel(r);
+    (r.events || []).forEach(showToast);
+  }
 
   const rtt = rtts.reduce((a, b) => a + b, 0) / Math.max(1, rtts.length);
   const fps = resultTimes.length / 2;
@@ -302,6 +385,7 @@ requestAnimationFrame(draw);
 // ── sources ──────────────────────────────────────────────────────────────────
 function sourceChanged(name) {
   latest = null;
+  if (mode() === "extinguisher") setMode("extinguisher");      // the server resets too
   $("box-original").classList.add("live");
   $("box-annotated").classList.add("live");
   setPill("src-state", "live", name);
@@ -341,6 +425,7 @@ if (params.get("video")) {
 }
 
 $("connect").addEventListener("click", connect);
+video.addEventListener("loadeddata", updateButtons);   // re-check once the video is really there
 modeInputs.forEach((i) => i.addEventListener("change", () => {
   setMode(mode());
   store.set("exitmon.mode", mode());

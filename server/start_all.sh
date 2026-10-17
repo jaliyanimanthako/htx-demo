@@ -9,7 +9,8 @@
 # - Each service runs in its own tmux session (qwen, locate, backend) — or as a
 #   background process if tmux is not installed — and logs to logs/<name>.log.
 # - Creates a backend token in .env if there is none.
-# - Waits until everything answers, then prints the address to open on your Mac.
+# - Waits until everything answers, then prints the backend port and token to enter
+#   in the web app (hosted separately, see frontend/serve.sh).
 # Already-running services are left alone. Stop with: bash server/stop_all.sh
 set -uo pipefail
 
@@ -124,18 +125,18 @@ wait_for "${SERVICES[2]}" || { echo; ui_warn "Backend did not start — fix the 
 
 TOKEN="$(grep -E '^BACKEND_TOKEN=' "$ROOT/.env" 2>/dev/null | tail -n 1 | cut -d= -f2-)"
 PORT="$(cat "$HOME/exit-monitor/port")"
-IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-URL="http://${IP:-<server-ip>}:$PORT/?token=${TOKEN:-<token>}"
 BAR="$(printf '─%.0s' $(seq 1 64))"
 echo
 printf '%s%s%s\n' "$C_GREEN" "$BAR" "$C_OFF"
 if [ "$ok" = 1 ]; then
-  printf '  %s%s All services are up.%s Open on your Mac:\n' "$C_GREEN$C_BOLD" "$UI_OK" "$C_OFF"
+  printf '  %s%s All services are up.%s\n' "$C_GREEN$C_BOLD" "$UI_OK" "$C_OFF"
 else
-  printf '  %sBackend is up, but a model server failed (see above).%s Open on your Mac:\n' "$C_YELLOW" "$C_OFF"
+  printf '  %sBackend is up, but a model server failed (see above).%s\n' "$C_YELLOW" "$C_OFF"
 fi
-printf '\n    %s%s%s\n\n' "$C_BOLD$C_CYAN" "$URL" "$C_OFF"
-printf '  %snot reachable? ssh -L %s:localhost:%s <user>@<server>  →  http://localhost:%s/?token=…%s\n' \
+printf '\n    Backend port   %s%s%s\n' "$C_BOLD$C_CYAN" "$PORT" "$C_OFF"
+printf '    Token          %s%s%s\n\n' "$C_BOLD$C_CYAN" "${TOKEN:-<none — set BACKEND_TOKEN in .env>}" "$C_OFF"
+printf '  In the web app enter  Backend URL: http://<server-ip>:%s   Token: (above)\n' "$PORT"
+printf '  %snot reachable? ssh -L %s:localhost:%s <user>@<server>  →  http://localhost:%s%s\n' \
   "$C_DIM" "$PORT" "$PORT" "$PORT" "$C_OFF"
 printf '  %sstatus: bash server/status.sh   ·   stop: bash server/stop_all.sh%s\n' "$C_DIM" "$C_OFF"
 [ "$USE_TMUX" = 1 ] && printf '  %swatch a service: tmux attach -t qwen | locate | backend  (Ctrl+B then D)%s\n' "$C_DIM" "$C_OFF"

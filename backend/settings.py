@@ -35,4 +35,3 @@ MAX_SESSIONS = int(os.environ.get("BACKEND_MAX_SESSIONS", "1"))
 OUT_DIR = Path(os.environ.get("BACKEND_OUT_DIR", ROOT / "results")).expanduser()
 LOCATE_URL = os.environ.get("LOCATE_URL") or _from_port_file("locate-anything", "", 8020)
 QWEN_URL = os.environ.get("QWEN_URL") or _from_port_file("qwen-vllm", "/v1", 8010)
-FRONTEND_DIR = ROOT / "frontend"

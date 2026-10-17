@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run the FastAPI backend on the GPU server (the web app on your Mac connects to it).
+# Run the FastAPI backend on the GPU server (API only; the web app is hosted
+# separately and connects with http://<server-ip>:<port> + the token).
 # Uses the ~/exit-monitor env (bash server/setup_monitor.sh) and finds the Qwen and
 # LocateAnything servers on this machine. Run it inside tmux:
 #

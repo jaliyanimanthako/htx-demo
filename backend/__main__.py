@@ -38,7 +38,7 @@ def main():
     except OSError:
         pass
     print(flush=True)
-    print(f"  Backend      : http://<this-host>:{port}   (API docs: /docs, web app: /)")
+    print(f"  Backend      : http://<this-host>:{port}   (API docs: /docs)")
     print(f"  Models       : LocateAnything {settings.LOCATE_URL} | Qwen {settings.QWEN_URL}")
     print(f"  Videos from  : {settings.VIDEO_DIR}")
     print(f"  Auth         : {'token required' if settings.TOKEN else 'OFF (set BACKEND_TOKEN)'}"

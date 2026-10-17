@@ -6,8 +6,9 @@
 // exit boxes, statuses, obstructions, events — which are drawn on a canvas over
 // the local video. One frame is in flight at a time, so nothing ever queues up.
 //
-// Backend URL / token: ?api=…&token=… , the inputs (remembered in this browser),
-// or the page's origin when the backend serves the page.
+// The web app is hosted separately from the backend (frontend/serve.sh). Enter the
+// backend URL (http://<server-ip>:<port>) and token; both are remembered in this
+// browser. ?api=…&token=… in the page URL also fills them in.
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -20,8 +21,7 @@ const SEND_WIDTH = 960;       // px — the pipeline's processing width
 const JPEG_QUALITY = 0.75;
 const MAX_FPS = 15;           // upper bound on frames sent per second
 
-const sameOrigin = location.protocol.startsWith("http") ? location.origin : "";
-$("api").value = params.get("api") || store.get("exitmon.api") || sameOrigin || "http://localhost:8100";
+$("api").value = params.get("api") || store.get("exitmon.api");
 $("token").value = params.get("token") || store.get("exitmon.token");
 
 const video = $("video");
@@ -66,6 +66,7 @@ function updateButtons() {
 
 // ── backend ──────────────────────────────────────────────────────────────────
 async function connect() {
+  if (!api()) { setStatus("Enter the backend URL, e.g. http://<server-ip>:8100", true); return; }
   store.set("exitmon.api", api());
   store.set("exitmon.token", token());
   setStatus("Connecting…");

@@ -148,7 +148,7 @@ class MJPEGStreamer:
         ip = _local_ip()
         what = "Web app" if self.ui_dir else "Browser view"
         print(f"  {what:12s} : http://{ip}:{self.port}   (this machine: http://localhost:{self.port})")
-        print(f"                 (not reachable? on your Mac: ssh -L {self.port}:localhost:{self.port} "
+        print(f"                 (not reachable? on your computer: ssh -L {self.port}:localhost:{self.port} "
               f"<user>@<server>  then open http://localhost:{self.port})")
         return self
 

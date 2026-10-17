@@ -88,4 +88,4 @@ verdict = ("REAL-TIME: status lags < 0.5 s" if m < 0.5 else
 print(f"  verdict            : {verdict}")
 PY
 echo
-echo "Annotated video: $OUT/live_${TAG}.mp4   (copy it to your Mac to watch)"
+echo "Annotated video: $OUT/live_${TAG}.mp4   (copy it to your computer to watch)"

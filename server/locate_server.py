@@ -2,7 +2,7 @@
 LocateAnything-3B HTTP server
 =============================
 Wraps NVIDIA's LocateAnythingWorker (from the model card) in a small FastAPI app
-so clients on the Mac / server can call it like the Qwen vLLM server.
+so clients (your computer or the server) can call it like the Qwen vLLM server.
 
 Endpoints
   GET  /health                       → model, device, GPU name

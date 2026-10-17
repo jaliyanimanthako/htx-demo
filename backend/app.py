@@ -15,7 +15,7 @@ FastAPI app
   WS     /api/live                           LIVE MODE: browser sends frames, gets JSON boxes
                                              (see backend/live.py for the message format)
   POST   /api/sessions/{id}/command          chat / command box — not implemented yet (501)
-  GET    /                                   the web app (frontend/), for convenience
+  GET    /                                   service name (the web app is hosted separately)
 
 Auth: if BACKEND_TOKEN is set, send "Authorization: Bearer <token>" or ?token=<token>
 (query form needed for <img> streams and WebSockets).
@@ -30,8 +30,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend import settings
@@ -297,10 +296,7 @@ def _shutdown():
     manager.stop_all()
 
 
-# ── web app (optional: the frontend can also be opened from anywhere) ─────────
-if settings.FRONTEND_DIR.is_dir():
-    @app.get("/", include_in_schema=False)
-    def index():
-        return FileResponse(settings.FRONTEND_DIR / "index.html")
-
-    app.mount("/", StaticFiles(directory=settings.FRONTEND_DIR), name="frontend")
+# ── root: the backend is API-only; the web app (frontend/) is hosted separately ──
+@app.get("/", include_in_schema=False)
+def root():
+    return {"service": "exit-monitor backend", "docs": "/docs", "health": "/api/health"}

@@ -137,9 +137,11 @@ Outputs go to `results/` (git-ignored); model weights to `models/` (git-ignored)
 
 ## Setup
 
-### 1. Client (Mac / laptop)
+### 1. Client (any laptop / desktop)
 
-Tested with Python 3.14 on macOS (Apple Silicon; YOLOE runs on the MPS GPU).
+Needed only for the command-line runners; the web app needs nothing but Python 3 to
+host it (`bash frontend/serve.sh`). Tested with Python 3.14 on macOS (Apple Silicon;
+YOLOE runs on the MPS GPU).
 
 ```bash
 cd htx_demo
@@ -159,7 +161,7 @@ Clone the repository on the server (and `git pull` there to pick up later change
 ```bash
 git clone <repo-url> ~/qwe
 cd ~/qwe
-# later, after pushing changes from the Mac:
+# later, after pushing changes from your computer:
 git pull
 ```
 
@@ -180,8 +182,9 @@ It does everything a new user would otherwise do by hand:
 - starts Qwen, LocateAnything and the backend, each in a tmux session (`qwen`, `locate`,
   `backend`) — or as background processes if tmux is not installed — logging to `logs/`;
 - creates a backend token in `.env` if there is none;
-- waits until all three answer and prints the address to open on your Mac
-  (`http://<server-ip>:<port>/?token=…`).
+- waits until all three answer and prints the **backend port and token**. The backend
+  only hosts the API; enter `http://<server-ip>:<port>` and the token in the web app,
+  which is hosted separately (see *Backend + web app*).
 
 Services that are already running are left alone, so it is safe to run again.
 
@@ -302,8 +305,9 @@ snapshot per exit, all events) and `exit<id>_<time>_<status>.jpg` snapshots.
 
 ### Backend + web app (`backend/`, `frontend/`)
 
-The detection pipeline runs as a **FastAPI service on the GPU server**; the web app runs
-in the browser on your Mac. The detection code is the same as `exit_monitor.py`.
+The detection pipeline runs as a **FastAPI service on the GPU server** (API only). The
+web app is hosted **separately**, on whatever machine you like, and connects to the
+backend with its address and token. The detection code is the same as `exit_monitor.py`.
 
 **Live mode (default).** The video plays **in the browser**, from a local file or the
 camera. The web app sends small JPEG frames (960 px wide) to the server over one
@@ -314,23 +318,23 @@ queue up. On the same network, expect a round trip of about 50–70 ms, or about
 results per second.
 
 ```
-Mac browser: video ─► JPEG frames ──WS /api/live──►  GPU server: backend (FastAPI, :8100)
+Browser:     video ─► JPEG frames ──WS /api/live──►  GPU server: backend (FastAPI, :8100)
              boxes ◄── JSON (boxes, statuses) ◄──     └─ YOLOE + LocateAnything + Qwen
 ```
 
 **On the server:** run `bash server/start_all.sh`. It starts Qwen, LocateAnything and
-the backend, and prints the address with the token. To start only the backend, run
+the backend, and prints the backend port and token. To start only the backend, run
 `bash server/run_backend.sh`.
 
-**On the Mac**, either open the app served by the backend at
-`http://<server-ip>:8100/?token=<secret>`, or run the frontend locally:
+**Host the web app** on any machine with Python 3 (it is static files only):
 
 ```bash
-python3 -m http.server 5173 -d frontend
-# open http://localhost:5173/?api=http://<server-ip>:8100&token=<secret>
+bash frontend/serve.sh                  # http://localhost:5173
+# no bash (e.g. Windows): python -m http.server 5173 --bind localhost -d frontend
 ```
 
-Then click **Connect**, then **Open video** (or **Camera**), then **Start detection**:
+Open `http://localhost:5173`, enter the **Backend URL** (`http://<server-ip>:<port>`) and
+the **Token**, then click **Connect**, then **Open video** (or **Camera**), then **Start detection**:
 
 - **Status line:** which models are in use, results per second, round-trip time
   (and the server's share of it), exit statuses and the last event.
@@ -344,11 +348,11 @@ Then click **Connect**, then **Open video** (or **Camera**), then **Start detect
 Notes:
 
 - **Playing `.MOV` files:** iPhone `.MOV` files (HEVC) play in Safari and Chrome on
-  macOS. If a browser can't play a file, convert it first:
+  macOS; other browsers / systems may not. If a browser can't play a file, convert it first:
   `ffmpeg -i in.MOV -c:v libx264 -pix_fmt yuv420p out.mp4`.
 - **Camera:** the browser allows camera access only on `https://` or `localhost`. Use
-  the local frontend (`localhost:5173`) or the SSH tunnel below.
-- **Unreachable port:** if the server port can't be reached from the Mac, tunnel it with
+  the web app on `localhost` (`frontend/serve.sh` does by default), or serve it over https.
+- **Unreachable port:** if the server port can't be reached from your computer, tunnel it with
   `ssh -L 8100:localhost:8100 <user>@<server>` and use `http://localhost:8100`.
 
 **Server-video sessions (older mode).** In this mode the server reads a video from its

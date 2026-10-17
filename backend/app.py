@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend import settings
+from backend.live import MODES as LIVE_MODES
 from backend.sessions import STREAMS, SessionError, SessionManager, list_videos
 
 app = FastAPI(title="Exit Monitor backend", version="1.0")
@@ -112,9 +113,11 @@ def info():
                                            "up": _up(settings.LOCATE_URL + "/health")},
                        "qwen": {"url_set": bool(settings.QWEN_URL),
                                 "up": _up(settings.QWEN_URL + "/models")}},
+            "modes": [{"id": k, "title": v["title"]} for k, v in LIVE_MODES.items()],
             "videos": list_videos(), "max_sessions": settings.MAX_SESSIONS,
             "sessions": [s.info() for s in manager.sessions.values()],
-            "live_sessions": [{"id": l.id, "frames": l.frames} for l in manager.live.values()]}
+            "live_sessions": [{"id": l.id, "mode": l.mode, "frames": l.frames}
+                              for l in manager.live.values()]}
 
 
 @app.get("/api/videos", dependencies=[Depends(require_token)])
@@ -228,11 +231,14 @@ async def events(ws: WebSocket, sid: str, token: Optional[str] = None):
 @app.websocket("/api/live")
 async def live(ws: WebSocket, token: Optional[str] = None):
     """
-    1. client → {"type": "start", "use_yoloe"?, "use_locate"?, "use_qwen"?, "options"?}
-       server → {"type": "ready", "id": ...}          (or {"type": "error", "detail": ...})
+    1. client → {"type": "start", "mode"?: "exits" | "extinguisher",
+                 "use_yoloe"?, "use_locate"?, "use_qwen"?, "options"?}
+       server → {"type": "ready", "id", "mode", "models", "skipped", "send_width",
+                 "jpeg_quality"}                      (or {"type": "error", "detail": ...})
     2. client → binary frame (uint32 seq | float64 video time | JPEG), one at a time
        server → {"type": "result", "seq", "t", "exits": [...], "obstacles": [...],
                  "events": [...new...], "proc_ms", ...}   boxes are 0..1 of the frame
+       (extinguisher mode: "extinguishers": [{id, status, due_text, confirmed, box, ...}])
     3. client → {"type": "reset"} (new video) or {"type": "stop"}
     """
     if not _token_ok(token):
@@ -247,16 +253,13 @@ async def live(ws: WebSocket, token: Optional[str] = None):
             return
         try:
             session = await asyncio.to_thread(
-                manager.create_live, start.get("use_yoloe", True), start.get("use_locate", True),
-                start.get("use_qwen", True), start.get("options") or {})
+                manager.create_live, start.get("mode", "exits"), start.get("use_yoloe", True),
+                start.get("use_locate", True), start.get("use_qwen", True),
+                start.get("options") or {})
         except Exception as e:
             await ws.send_json({"type": "error", "detail": f"{type(e).__name__}: {e}"})
             return
-        await ws.send_json({"type": "ready", "id": session.id,
-                            "models": {"yoloe": not session.args.no_yoloe,
-                                       "locate_anything": bool(session.args.locate_url),
-                                       "qwen": bool(session.args.qwen_url)},
-                            "skipped": session.skipped})
+        await ws.send_json(session.ready_message())
         while True:
             msg = await ws.receive()
             if msg["type"] == "websocket.disconnect":

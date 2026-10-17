@@ -1,5 +1,10 @@
 // Exit Monitor web app — live mode.
 //
+// Two modes (switch at the top): "Exit obstruction" and "Fire extinguisher" (finds
+// extinguishers and reads their service / expiry date). The server says in its
+// "ready" message how big the frames should be (extinguisher mode needs full
+// resolution to read the sticker).
+//
 // The video (file or camera) plays HERE, in the browser. Frames are grabbed from the
 // <video>, shrunk, JPEG-encoded and sent to the backend over one WebSocket
 // (/api/live). The backend runs the detection pipeline and returns only JSON —
@@ -17,12 +22,37 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
 };
 
-const SEND_WIDTH = 960;       // px — the pipeline's processing width
-const JPEG_QUALITY = 0.75;
+let sendWidth = 960;          // px — set by the server's "ready" message per mode
+let jpegQuality = 0.75;
 const MAX_FPS = 15;           // upper bound on frames sent per second
+
+const MODES = {
+  exits: {
+    checklist: ["All exits identified", "Exit paths clear of obstructions", "Exit signs visible",
+                "Doors open fully"],
+    toast: "EXIT #9 is <strong>BLOCKED</strong> — chair, cardboard box",
+  },
+  extinguisher: {
+    checklist: ["Extinguishers present", "Service tag readable", "Service date not overdue",
+                "Mounted and unobstructed"],
+    toast: "EXTINGUISHER #2 is <strong>EXPIRED</strong> — next service was 03/2026",
+  },
+};
 
 $("api").value = params.get("api") || store.get("exitmon.api");
 $("token").value = params.get("token") || store.get("exitmon.token");
+
+const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
+const mode = () => (modeInputs.find((i) => i.checked) || modeInputs[0]).value;
+function setMode(m) {
+  if (!MODES[m]) return;
+  modeInputs.forEach((i) => { i.checked = i.value === m; });
+  // right side is a mockup: just show the checklist / pop-up text for this mode
+  $("checklist").innerHTML = MODES[m].checklist
+    .map((t) => `<li><label><input type="checkbox" disabled> ${t}</label></li>`).join("");
+  $("toast-text").innerHTML = MODES[m].toast;
+}
+setMode(params.get("mode") || store.get("exitmon.mode") || "exits");
 
 const video = $("video");
 const overlay = $("overlay");
@@ -42,6 +72,7 @@ const rtts = [];
 const resultTimes = [];
 let lastEvent = null;
 let modelsText = "";
+let restartOnClose = false;   // mode switched while detecting → reconnect in the new mode
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const api = () => $("api").value.trim().replace(/\/$/, "");
@@ -91,17 +122,25 @@ function startDetection() {
   ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
   setPill("det-state", "", "starting…");
-  ws.onopen = () => ws.send(JSON.stringify({ type: "start" }));
+  const m = mode();
+  ws.onopen = () => ws.send(JSON.stringify({ type: "start", mode: m }));
   ws.onmessage = (msg) => {
     const data = JSON.parse(msg.data);
     if (data.type === "ready") {
       detecting = true;
       inFlight = false;
+      latest = null;
+      lastEvent = null;
+      sendWidth = data.send_width || 960;
+      jpegQuality = data.jpeg_quality || 0.75;
       const names = { yoloe: "YOLOE", locate_anything: "LocateAnything", qwen: "Qwen" };
       modelsText = Object.entries(data.models).filter(([, on]) => on).map(([k]) => names[k]).join(" + ");
       if (data.skipped && data.skipped.length) modelsText += ` (${data.skipped.join(", ")} down — skipped)`;
       setPill("det-state", "live", "detecting");
       setStatus(`Detection running · ${modelsText}`, Boolean(data.skipped && data.skipped.length));
+      if (data.mode === "extinguisher" && !data.models.qwen) {
+        setStatus(`Detection running · ${modelsText} — dates cannot be read without Qwen`, true);
+      }
       updateButtons();
       sendFrame();
     } else if (data.type === "result") {
@@ -120,6 +159,10 @@ function startDetection() {
     if (e.code === 4401 || e.code === 1008) setStatus("Wrong or missing token", true);
     else if (was) setStatus("Detection stopped");
     updateButtons();
+    if (restartOnClose) {
+      restartOnClose = false;
+      startDetection();
+    }
   };
 }
 
@@ -137,7 +180,7 @@ function sendFrame() {
     setTimeout(sendFrame, 1000 / MAX_FPS - (now - lastSend));
     return;
   }
-  const scale = Math.min(1, SEND_WIDTH / video.videoWidth);
+  const scale = Math.min(1, sendWidth / video.videoWidth);
   grab.width = Math.round(video.videoWidth * scale);
   grab.height = Math.round(video.videoHeight * scale);
   gctx.drawImage(video, 0, 0, grab.width, grab.height);
@@ -155,7 +198,7 @@ function sendFrame() {
     sentAt.set(seq, performance.now());
     seq += 1;
     ws.send(msg.buffer);
-  }, "image/jpeg", JPEG_QUALITY);
+  }, "image/jpeg", jpegQuality);
 }
 
 function onResult(r) {
@@ -171,7 +214,11 @@ function onResult(r) {
 
   const rtt = rtts.reduce((a, b) => a + b, 0) / Math.max(1, rtts.length);
   const fps = resultTimes.length / 2;
-  const exits = r.exits.map((e) => `#${e.id} ${e.status_text}`).join(", ") || "no exits in view";
+  const exits = r.mode === "extinguisher"
+    ? r.extinguishers.map((x) => `#${x.id} ${x.status_text}${x.due_text ? ` ${x.due_text}` : ""}`
+                                 + `${x.due_text && !x.confirmed ? "?" : ""}`).join(", ")
+      || "no extinguishers in view"
+    : r.exits.map((e) => `#${e.id} ${e.status_text}`).join(", ") || "no exits in view";
   setStatus(`${modelsText} · ${fps.toFixed(1)} results/s · round trip ${rtt.toFixed(0)} ms (server ${r.proc_ms} ms) · ${exits}`
             + (lastEvent ? ` · last: ${lastEvent.text}` : ""));
   sendFrame();
@@ -188,6 +235,8 @@ setInterval(sendFrame, 250);
 // ── drawing (every animation frame, locally) ────────────────────────────────
 const COLORS = { clear: "#16a34a", partially_obstructed: "#f59e0b", obstructed: "#dc2626", unknown: "#9ca3af" };
 const OBSTACLE = "#f97316";
+const EXT_COLORS = { reading: "#9ca3af", valid: "#16a34a", expiring_soon: "#f59e0b",
+                     expired: "#dc2626", unclear: "#f59e0b", unreadable: "#a855f7" };
 
 function label(ctx, text, x, y, color, size) {
   ctx.font = `600 ${size}px -apple-system, Segoe UI, sans-serif`;
@@ -198,7 +247,7 @@ function label(ctx, text, x, y, color, size) {
   const tx = Math.min(Math.max(0, x), overlay.width - w);
   ctx.fillStyle = color;
   ctx.fillRect(tx, ty - h, w, h);
-  ctx.fillStyle = color === COLORS.partially_obstructed ? "#111" : "#fff";
+  ctx.fillStyle = [COLORS.partially_obstructed, COLORS.unknown].includes(color) ? "#111" : "#fff";
   ctx.fillText(text, tx + pad, ty - size * 0.4);
 }
 
@@ -216,6 +265,21 @@ function draw() {
   const shown = Math.min(overlay.clientWidth / W, overlay.clientHeight / H) || 1;
   const lw = 2 / shown;
   const fs = 13 / shown;
+  if (latest.mode === "extinguisher") {
+    for (const x of latest.extinguishers) {
+      const [x1, y1, x2, y2] = x.box;
+      const color = EXT_COLORS[x.status] || EXT_COLORS.reading;
+      octx.strokeStyle = color;
+      octx.lineWidth = lw * 1.5;
+      octx.strokeRect(x1 * W, y1 * H, (x2 - x1) * W, (y2 - y1) * H);
+      let text = `EXT #${x.id} ${x.status_text}`;
+      if (x.due_text) text += ` ${x.due_text}${x.confirmed ? "" : "?"}`;
+      if (x.reading) text += " …";
+      else if (x.hint && ["reading", "unreadable"].includes(x.status)) text += ` (${x.hint})`;
+      label(octx, text, x1 * W, y1 * H, color, fs);
+    }
+    return;
+  }
   for (const o of latest.obstacles) {
     const [x1, y1, x2, y2] = o.box;
     octx.strokeStyle = OBSTACLE;
@@ -277,6 +341,15 @@ if (params.get("video")) {
 }
 
 $("connect").addEventListener("click", connect);
+modeInputs.forEach((i) => i.addEventListener("change", () => {
+  setMode(mode());
+  store.set("exitmon.mode", mode());
+  latest = null;
+  if (ws) {                       // switch while detecting: reconnect in the new mode
+    restartOnClose = true;
+    stopDetection();
+  }
+}));
 $("detect").addEventListener("click", () => (detecting ? stopDetection() : startDetection()));
 if ($("api").value) connect();
 

@@ -160,3 +160,25 @@ VERDICT_PROMPT = ("Look at the door in the middle of this image. Is anything on 
                   "front of it, in the doorway or against it that blocks or narrows the way "
                   "through? Ignore things on desks or far in front. Answer with one letter: "
                   "C = clear, P = partially blocked (a person can still pass), B = blocked.")
+
+
+# ── Fire-extinguisher mode (extinguisher_monitor.py; parsed by core/expiry.py) ──
+# Two steps: find the dated sticker / tag on the extinguisher crop, then read a tight,
+# upscaled crop of it. Qwen only COPIES the date and the words next to it; the meaning
+# (next service, last service, expiry, …) is decided in code (core/expiry.py) — a 4B
+# model mixes up "next" and "last" when asked to interpret.
+EXTINGUISHER_SYSTEM = "You read dates on fire-extinguisher labels and tags. Never guess digits."
+
+EXTINGUISHER_LOCATE_PROMPT = (
+    "Find every label, sticker or tag on this fire extinguisher that has a handwritten or "
+    "printed DATE on it (service / inspection / expiry sticker or tag). Ignore the printed "
+    "instructions. Answer one line per sticker: x1 y1 x2 y2 on a 0-1000 scale of this "
+    "image. If there is none, answer NONE.")
+
+EXTINGUISHER_PROMPT = (
+    "Read this service / inspection sticker of a fire extinguisher.\n"
+    "For every date on it, output one line:\n"
+    "DATE <date exactly as written> | <the words printed just before or above that date>\n"
+    "Copy the words, do not interpret them. Dates may be handwritten.\n"
+    "If there is no readable date, output exactly: NONE <too_small|blurry>\n"
+    "Never guess digits. No other text.")

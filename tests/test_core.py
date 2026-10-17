@@ -9,6 +9,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from datetime import date                                             # noqa: E402
+
+from core import expiry                                               # noqa: E402
 from core.labels import kind_of                                      # noqa: E402
 from core.parsing import parse_response                               # noqa: E402
 from core.rules import assess, covers_door_base, merge_double_doors  # noqa: E402
@@ -88,6 +91,40 @@ def test_label_kinds():
     assert kind_of("glass door", *labels) == "door"
     assert kind_of("exit sign", *labels) == "sign"
     assert kind_of("office chair", *labels) == "obstacle"
+
+
+
+def test_expiry_date_formats():
+    p = expiry.parse_date
+    assert p("15/03/2027") == (date(2027, 3, 15), "day")
+    assert p("03/15/2027", dayfirst=False) == (date(2027, 3, 15), "day")
+    assert p("13/05/2027", dayfirst=False) == (date(2027, 5, 13), "day")   # only valid order
+    assert p("2027-03-15") == (date(2027, 3, 15), "day")
+    assert p("03/2027") == p("3/27") == p("MAR 2027") == (date(2027, 3, 31), "month")
+    assert p("15 March 2027") == (date(2027, 3, 15), "day")
+    assert p("2027") == (date(2027, 12, 31), "year")
+    assert p("13/2027") is None and p("no date") is None
+    assert p("14-5-2") is None and p("1/1/1850") is None                     # not plausible years
+
+
+def test_expiry_answer_and_status():
+    today = date(2026, 10, 17)
+    a = expiry.parse_answer("DATE LAST_SERVICE 03/2025\nDATE MANUFACTURED 2019")
+    r = expiry.assess(a["dates"], today)
+    assert r["status"] == "expired" and r["due"] == date(2026, 3, 31)      # last service + 12 months
+    a = expiry.parse_answer("DATE NEXT_SERVICE 11/2026")
+    assert expiry.assess(a["dates"], today)["status"] == "valid"             # 44 days left
+    assert expiry.assess(a["dates"], today, soon_days=60)["status"] == "expiring_soon"
+    a = expiry.parse_answer("DATE NEXT_SERVICE 12/2030\nDATE MANUFACTURED 2016")
+    assert expiry.assess(a["dates"], today)["due"] == date(2026, 12, 31)     # end of life first
+    a = expiry.parse_answer("JUNE 2016 | HAS BEEN\nJUNE 2027 | HAS BEEN")       # words on the wrong date
+    assert expiry.assess(a["dates"], today)["due"] == date(2027, 6, 30)     # future "last" = next
+    a = expiry.parse_answer("DATE JUNE-2026 | ON\nDATE JUNE-2027 | NEXT RECOMMENDED SERVICING")
+    assert [d["kind"] for d in a["dates"]] == ["LAST_SERVICE", "NEXT_SERVICE"]
+    a = expiry.parse_answer("DATE UNKNOWN 05/2027")
+    assert expiry.assess(a["dates"], today)["status"] == "unclear"
+    assert expiry.parse_answer("NONE too_small") == {"dates": [], "none": "too_small"}
+    assert expiry.parse_answer("I cannot see it")["none"] == "unreadable"
 
 
 if __name__ == "__main__":

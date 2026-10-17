@@ -103,6 +103,7 @@ or when you do not want to install YOLOE. Compare the two on the same video.
 
 ```
 exit_monitor.py      MAIN: YOLOE + LocateAnything + Qwen, exit memory, panel, report
+extinguisher_monitor.py  fire extinguishers: YOLOE + Qwen reads the expiry / service date (CLI)
 locate_live.py       LocateAnything (+ optional Qwen assist) live, position rule
 live_infer.py        Qwen-only live (prompt → boxes + status); --delay buffered mode
 video_infer.py       Qwen-only offline: process a recorded video, side-by-side output
@@ -115,6 +116,7 @@ core/                shared library (no entry points)
   prompts.py         every prompt in one place
   parsing.py         VLM answer → detections (compact E/O lines or JSON) + sanity checks
   rules.py           geometric obstruction rule (clearance zone, occlusion, double doors)
+  expiry.py          extinguisher dates: parse Qwen's DATE lines, due date, status
   depth_check.py     close-up "floor or furniture?" check with a position cache
   qwen_detect.py     one full-frame Qwen detection call
   qwen_assist.py     Qwen naming objects for LocateAnything + depth check
@@ -148,7 +150,7 @@ cd htx_demo
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.sample .env          # then fill in the server addresses
-.venv/bin/python tests/test_core.py    # offline sanity check: should print 11/11 passed
+.venv/bin/python tests/test_core.py    # offline sanity check: should print 13/13 passed
 ```
 
 The first YOLOE run downloads `yoloe-11s-seg.pt` and the MobileCLIP text encoder
@@ -334,10 +336,21 @@ bash frontend/serve.sh                  # http://localhost:5173
 ```
 
 Open `http://localhost:5173`, enter the **Backend URL** (`http://<server-ip>:<port>`) and
-the **Token**, then click **Connect**, then **Open video** (or **Camera**), then **Start detection**:
+the **Token**, then click **Connect**. Pick a **mode**, then **Open video** (or
+**Camera**), then **Start detection**:
+
+| Mode | What it does | Models | Frames sent |
+|---|---|---|---|
+| **Exit obstruction** | exits and what blocks them (`exit_monitor.py`) | YOLOE + LocateAnything + Qwen | 960 px, JPEG 0.75 |
+| **Fire extinguisher** | extinguishers and their expiry or service date (`extinguisher_monitor.py`) | YOLOE + Qwen | 1920 px, JPEG 0.9 |
+
+The server tells the browser which frame size to send. Extinguisher mode needs full
+resolution to read the sticker, so it uses about 4× the bandwidth (fine on a LAN). If
+you switch mode while detecting, the app reconnects in the new mode. The right-side
+checklist (still a mockup) changes with the mode.
 
 - **Status line:** which models are in use, results per second, round-trip time
-  (and the server's share of it), exit statuses and the last event.
+  (and the server's share of it), exit or extinguisher statuses, and the last event.
 - **Down model servers:** a server that is down is skipped and reported, rather than
   failing the session.
 - **New video:** opening another video resets the exit memory on the server.
@@ -363,17 +376,22 @@ Live frame message (a binary WebSocket message, little-endian): `uint32 seq`, th
 `float64 video_time_s`, then the JPEG bytes. Box coordinates in the replies are
 fractions of the frame, from 0 to 1.
 
+- The start message chooses the mode: `{"type":"start","mode":"exits"|"extinguisher"}`.
+- The `ready` reply carries `send_width` and `jpeg_quality`.
+- In extinguisher mode, each `result` has an `extinguishers` list:
+  `{id, status, status_text, due_text, confirmed, reading, hint, text, box}`.
+
 | Endpoint | |
 |---|---|
 | `GET /api/health` | liveness, whether a token is required (no auth) |
-| `GET /api/info` | model servers up/down, videos, sessions |
+| `GET /api/info` | model servers up/down, live modes, videos, sessions |
 | `GET /api/videos` | videos a session can play (files in `BACKEND_VIDEO_DIR`) |
 | `POST /api/sessions` | start `{source, loop, use_yoloe, use_locate, use_qwen, options}` |
 | `GET /api/sessions`, `GET /api/sessions/{id}` | status + latest state (exits, blockers) |
 | `DELETE /api/sessions/{id}` | stop (report is written) |
 | `GET /api/sessions/{id}/stream/{original\|annotated\|combined}` | MJPEG streams |
 | `WS /api/sessions/{id}/events` | live `event` / `state` / `end` messages |
-| `WS /api/live` | **live mode**: `{type:"start"}` → `ready`; binary frame → `result` (exits, obstacles, events); `{type:"reset"}`, `{type:"stop"}` |
+| `WS /api/live` | **live mode**: `{type:"start", mode}` → `ready`; binary frame → `result` (exits + obstacles, or extinguishers; events); `{type:"reset"}`, `{type:"stop"}` |
 | `GET /api/sessions/{id}/report` | `report.json` after the session ends |
 | `POST /api/sessions/{id}/command` | chat / commands — not implemented yet (501) |
 
@@ -390,6 +408,76 @@ the server's video folder (default: the repo root) or an `rtsp://` URL.
 
 `exit_monitor.py --stream` still works for quick checks: an all-in-one browser view
 (`/stream`), plus `/stream/original`, `/stream/annotated` and `/state`.
+
+### Fire extinguishers: `extinguisher_monitor.py` (CLI, first version)
+
+This tool finds fire extinguishers and reads the expiry or service date on their label
+or inspection tag. It needs only YOLOE and the Qwen server; LocateAnything is not used.
+
+```bash
+.venv/bin/python extinguisher_monitor.py IMG_0454.MOV            # video (QWEN_URL from .env)
+.venv/bin/python extinguisher_monitor.py tag.jpg                 # a photo, or a folder of photos
+.venv/bin/python extinguisher_monitor.py IMG_0454.MOV --no-qwen  # detection only
+```
+
+How it works:
+
+1. **Detect and track.** YOLOE finds each extinguisher and the tracker gives it an ID
+   that stays stable, even while you walk up to it.
+2. **Keep the best view.** The tool keeps the best crop of each extinguisher, taken
+   from the full-resolution frame and scored on size × sharpness. Extinguishers
+   narrower than `--min-px` (default 120 px) are not read; the label says "move closer".
+3. **Read in two steps,** in the background:
+   - **Locate:** Qwen finds the dated sticker or tag on the crop.
+   - **Read:** a tight crop of the sticker, upscaled to about 1000 px, is read. Qwen
+     only copies each date and the words printed next to it
+     (`DATE JUNE-2027 | NEXT RECOMMENDED SERVICING`).
+
+   The code then decides what kind of date it is from those words: next service,
+   last service, expiry, manufacture date or unknown. A 4B model mixes up "next" and
+   "last" when asked to decide, and misreads digits when the sticker is only about
+   100 px wide.
+4. **Vote.** While the extinguisher is close, it keeps reading new views, 2 at a time
+   (`--parallel`). It stops once two reads give the same due date; until then the
+   status is shown with a "?" and marked "unconfirmed". The usual misread digits
+   (2026 → 2024) get outvoted.
+
+In photo mode, if no extinguisher is detected, the whole photo is read as a close-up of
+the tag.
+
+| Status | When |
+|---|---|
+| **VALID** | due date later than `--soon-days` (30) from today |
+| **DUE SOON** | due within `--soon-days` |
+| **EXPIRED** | due date passed |
+| **CHECK DATE** | dates read, but none says what it means |
+| **UNREADABLE** | no date readable (`too_small`, `blurry`, `no_tag`) |
+
+How the due date is worked out:
+
+- An expiry or next-service date is used as written.
+- A last-service date alone gets `--service-months` (12) added.
+- A manufacture date gets `--life-years` (10) added, and the earliest limit wins.
+- A "last service" date in the future must be the next-service date (the words were
+  attached to the wrong date), so it is treated as one.
+- A date with only a month counts until the end of that month.
+- Dates are read day-first unless you pass `--monthfirst`.
+- `--today YYYY-MM-DD` sets "today", for testing.
+
+Each run writes `results/extinguisher_<video>/report.json`. It holds every read (Qwen's
+raw answer, the dates and the crop file) and the final status of each extinguisher. The
+run also saves each extinguisher crop, the sticker crops Qwen read (`*_tag1.jpg`) and a
+scene snapshot.
+
+Results with Qwen3-VL-4B on the walk-by videos, at about 1.5 s per read:
+
+| Video | Result |
+|---|---|
+| `IMG_0454`, `IMG_0456` | **VALID**, due 06/2027 (next service), confirmed |
+| `IMG_0453` | **UNREADABLE**: the sticker never faces the camera |
+
+A date is read only when the sticker is close (the extinguisher fills about a third or
+more of the frame height). A second or two of steady view is enough.
 
 ### Other runners
 

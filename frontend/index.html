@@ -14,6 +14,10 @@
         <input id="api" type="url" placeholder="Backend URL, e.g. http://&lt;server-ip&gt;:8100" aria-label="Backend URL">
         <input id="token" type="password" placeholder="Token" aria-label="Token">
         <button id="connect" type="button">Connect</button>
+        <div class="modes" role="radiogroup" aria-label="Mode">
+          <label><input type="radio" name="mode" value="exits" checked><span>Exit obstruction</span></label>
+          <label><input type="radio" name="mode" value="extinguisher"><span>Fire extinguisher</span></label>
+        </div>
         <label class="file-btn">Open video<input id="file" type="file" accept="video/*" hidden></label>
         <button id="camera" type="button" class="secondary">Camera</button>
         <button id="detect" type="button" disabled>Start detection</button>
@@ -50,16 +54,11 @@
           <h2>Predefined checklist</h2>
           <span class="badge">mockup</span>
         </header>
-        <ul class="checklist">
-          <li><label><input type="checkbox" disabled> All exits identified</label></li>
-          <li><label><input type="checkbox" disabled> Exit paths clear of obstructions</label></li>
-          <li><label><input type="checkbox" disabled> Exit signs visible</label></li>
-          <li><label><input type="checkbox" disabled> Doors open fully</label></li>
-        </ul>
+        <ul class="checklist" id="checklist"></ul>
 
         <div class="toast" id="toast" role="status">
           <span class="toast-dot"></span>
-          <p>EXIT #9 is <strong>BLOCKED</strong> — chair, cardboard box</p>
+          <p id="toast-text">EXIT #9 is <strong>BLOCKED</strong> — chair, cardboard box</p>
           <button class="toast-close" id="toast-close" aria-label="Dismiss">&times;</button>
         </div>
       </article>

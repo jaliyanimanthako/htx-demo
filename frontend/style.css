@@ -127,6 +127,27 @@ html, body {
   cursor: pointer;
 }
 
+/* mode switch (segmented control) */
+.modes {
+  display: inline-flex;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.modes label { cursor: pointer; }
+.modes input { position: absolute; opacity: 0; pointer-events: none; }
+
+.modes span {
+  display: block;
+  padding: 6.5px 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.modes input:checked + span { background: var(--text); color: var(--panel); }
+.modes input:focus-visible + span { outline: 2px solid var(--ok); outline-offset: -2px; }
+
 .controls button:disabled { opacity: 0.4; cursor: default; }
 
 .status {

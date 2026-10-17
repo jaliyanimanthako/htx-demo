@@ -144,11 +144,21 @@ class SessionManager:
         self.live: dict = {}                # live (browser-fed) sessions, see backend/live.py
         self._lock = threading.Lock()
         self._fast = None                   # YOLOE loaded once, shared by sessions
+        self._ext = None                    # YOLOE with the extinguisher classes
 
     def _fast_detector(self):
         if self._fast is None:
             self._fast = FastDetector(build_parser().parse_args(["x"]).yoloe_model)
         return self._fast
+
+    def _detector(self, mode: str):
+        if mode == "exits":
+            return self._fast_detector()
+        if self._ext is None:
+            import extinguisher_monitor as X
+            a = X.build_parser().parse_args(["x"])
+            self._ext = X.ExtinguisherDetector(a.yoloe_model, a.conf)
+        return self._ext
 
     def create(self, source: str, loop: bool = True, use_yoloe: bool = True,
                use_locate: bool = True, use_qwen: bool = True, options: dict = None) -> Session:
@@ -162,15 +172,15 @@ class SessionManager:
             self.sessions[session.id] = session
         return session.start()
 
-    def create_live(self, use_yoloe=True, use_locate=True, use_qwen=True, options=None):
+    def create_live(self, mode="exits", use_yoloe=True, use_locate=True, use_qwen=True,
+                    options=None):
         from backend.live import LiveSession
         with self._lock:
             running = [s for s in self.sessions.values() if not s.done] + list(self.live.values())
             if len(running) >= settings.MAX_SESSIONS:
                 raise SessionError(f"already running: {', '.join(s.id for s in running)} "
                                    f"(max {settings.MAX_SESSIONS}) — stop it first")
-            fast = self._fast_detector() if use_yoloe else None
-        live = LiveSession(fast, use_yoloe, use_locate, use_qwen, options)
+        live = LiveSession(self._detector, mode, use_yoloe, use_locate, use_qwen, options)
         with self._lock:
             self.live[live.id] = live
         return live

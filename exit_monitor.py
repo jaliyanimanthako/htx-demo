@@ -59,7 +59,7 @@ STATUS_TEXT = {"unknown": "CHECKING", "clear": "CLEAR",
                "partially_obstructed": "PARTIAL", "obstructed": "BLOCKED"}
 STATUS_BGR = {"unknown": (160, 160, 160), "clear": (0, 200, 0),
               "partially_obstructed": (0, 200, 255), "obstructed": (0, 0, 255)}
-OBSTACLE_BGR = (0, 128, 255)
+OBSTACLE_BGR = (0, 0, 255)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -536,12 +536,12 @@ class ExitMonitor:
             if not rec.visible or t is None:
                 continue
             x1, y1, x2, y2 = (int(v) for v in t["box"])
-            col = STATUS_BGR[rec.status]
+            checking = self.qwen is not None and t["exit_ok"] is not True
+            display_status = "unknown" if checking else rec.status
+            col = STATUS_BGR[display_status]
             cv2.rectangle(out, (x1, y1), (x2, y2), col, th + 2)
-            tag = ("EXIT" if t["signed"] else "door") + f" #{tid}"
-            if t["exit_ok"] is None and self.qwen:
-                tag += " ?"
-            text = f"{tag} {STATUS_TEXT[rec.status]} {now - rec.since:.0f}s"
+            tag = "EXIT" if t["signed"] else "door"
+            text = f"{tag} {STATUS_TEXT[display_status]} {now - rec.since:.0f}s"
             self._label(out, text, x1, y1, col, s, th)
         for t in self.tracker.visible("obstacle"):
             if t["depth"] == "furniture":
@@ -552,7 +552,7 @@ class ExitMonitor:
             x1, y1, x2, y2 = (int(v) for v in t["box"])
             cv2.rectangle(out, (x1, y1), (x2, y2), OBSTACLE_BGR, th + 1)
             mark = " (floor ok)" if t["depth"] == "floor" else ""
-            self._label(out, f"{t['label']} #{t['id']}{mark}",
+            self._label(out, f"{t['label']}{mark}",
                         x1, y1, OBSTACLE_BGR, s * 0.85, th)
         return out
 

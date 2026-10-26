@@ -134,7 +134,7 @@ class LiveSource:
             self._t0 = time.time()
         target = int((time.time() - self._t0) * self.fps)
         if target <= self.idx:                      # ahead of real time → wait
-            time.sleep((self.idx + 1) / self.fps - (time.time() - self._t0))
+            time.sleep(max(0.0, (self.idx + 1) / self.fps - (time.time() - self._t0)))
             target = self.idx + 1
         skipped = 0
         while self.idx + 1 < target:                # behind real time → drop frames

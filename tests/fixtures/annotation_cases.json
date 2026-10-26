@@ -1,0 +1,598 @@
+[
+  {
+    "name": "exit_unknown",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [
+        {
+          "id": 30,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "unknown",
+          "status_text": "CHECKING",
+          "confirmed": true
+        }
+      ],
+      "obstacles": [],
+      "extinguishers": []
+    },
+    "expected": [
+      {
+        "label": "EXIT · CHECKING",
+        "status": "unknown",
+        "color": "A0A0A0"
+      }
+    ]
+  },
+  {
+    "name": "exit_clear",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [
+        {
+          "id": 30,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "clear",
+          "status_text": "CLEAR",
+          "confirmed": true
+        }
+      ],
+      "obstacles": [],
+      "extinguishers": []
+    },
+    "expected": [
+      {
+        "label": "EXIT · CLEAR",
+        "status": "clear",
+        "color": "00C800"
+      }
+    ]
+  },
+  {
+    "name": "exit_partially_obstructed",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [
+        {
+          "id": 30,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "partially_obstructed",
+          "status_text": "PARTIAL",
+          "confirmed": true
+        }
+      ],
+      "obstacles": [],
+      "extinguishers": []
+    },
+    "expected": [
+      {
+        "label": "EXIT · PARTIAL",
+        "status": "partially_obstructed",
+        "color": "FFC800"
+      }
+    ]
+  },
+  {
+    "name": "exit_obstructed",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [
+        {
+          "id": 30,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "obstructed",
+          "status_text": "BLOCKED",
+          "confirmed": true
+        }
+      ],
+      "obstacles": [],
+      "extinguishers": []
+    },
+    "expected": [
+      {
+        "label": "EXIT · BLOCKED",
+        "status": "obstructed",
+        "color": "FF0000"
+      }
+    ]
+  },
+  {
+    "name": "exit_confirmation_pending",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [
+        {
+          "id": 30,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "clear",
+          "status_text": "CLEAR",
+          "confirmed": null
+        }
+      ],
+      "obstacles": [],
+      "extinguishers": []
+    },
+    "expected": [
+      {
+        "label": "EXIT · CHECKING",
+        "status": "unknown",
+        "color": "A0A0A0"
+      }
+    ]
+  },
+  {
+    "name": "geometric_exit_without_qwen",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": false,
+      "date_reading_enabled": false,
+      "exits": [
+        {
+          "id": 30,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "clear",
+          "status_text": "CLEAR",
+          "confirmed": null
+        }
+      ],
+      "obstacles": [],
+      "extinguishers": []
+    },
+    "expected": [
+      {
+        "label": "EXIT · CLEAR",
+        "status": "clear",
+        "color": "00C800"
+      }
+    ]
+  },
+  {
+    "name": "obstruction_name_preserved",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [
+        {
+          "id": 44,
+          "label": "chair",
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ]
+        }
+      ],
+      "extinguishers": []
+    },
+    "expected": [
+      {
+        "label": "chair",
+        "status": "obstacle",
+        "color": "FF0000"
+      }
+    ]
+  },
+  {
+    "name": "verified_valid",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "valid",
+          "status_text": "VALID",
+          "confirmed": true,
+          "reading": false,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · VALID",
+        "status": "valid",
+        "color": "00C800"
+      }
+    ]
+  },
+  {
+    "name": "provisional_valid",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "valid",
+          "status_text": "VALID",
+          "confirmed": false,
+          "reading": false,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · VALID · unverified",
+        "status": "unverified",
+        "color": "A0A0A0"
+      }
+    ]
+  },
+  {
+    "name": "verified_expiring_soon",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "expiring_soon",
+          "status_text": "DUE SOON",
+          "confirmed": true,
+          "reading": false,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · DUE SOON",
+        "status": "expiring_soon",
+        "color": "FFC800"
+      }
+    ]
+  },
+  {
+    "name": "provisional_expiring_soon",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "expiring_soon",
+          "status_text": "DUE SOON",
+          "confirmed": false,
+          "reading": false,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · DUE SOON · unverified",
+        "status": "unverified",
+        "color": "A0A0A0"
+      }
+    ]
+  },
+  {
+    "name": "verified_expired",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "expired",
+          "status_text": "EXPIRED",
+          "confirmed": true,
+          "reading": false,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · EXPIRED",
+        "status": "expired",
+        "color": "FF0000"
+      }
+    ]
+  },
+  {
+    "name": "provisional_expired",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "expired",
+          "status_text": "EXPIRED",
+          "confirmed": false,
+          "reading": false,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · EXPIRED · unverified",
+        "status": "unverified",
+        "color": "A0A0A0"
+      }
+    ]
+  },
+  {
+    "name": "tag_read_pending",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "valid",
+          "status_text": "VALID",
+          "confirmed": true,
+          "reading": true,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · READING",
+        "status": "reading",
+        "color": "A0A0A0"
+      }
+    ]
+  },
+  {
+    "name": "reading",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "reading",
+          "status_text": "READING",
+          "confirmed": false,
+          "reading": false,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · READING",
+        "status": "reading",
+        "color": "A0A0A0"
+      }
+    ]
+  },
+  {
+    "name": "unreadable",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": true,
+      "date_reading_enabled": true,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "unreadable",
+          "status_text": "UNREADABLE",
+          "confirmed": false,
+          "reading": false,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · UNREADABLE · unverified",
+        "status": "unverified",
+        "color": "A0A0A0"
+      }
+    ]
+  },
+  {
+    "name": "dates_unavailable",
+    "wire": {
+      "type": "result",
+      "mode": "combined",
+      "seq": 1,
+      "t": 0,
+      "qwen_active": false,
+      "date_reading_enabled": false,
+      "exits": [],
+      "obstacles": [],
+      "extinguishers": [
+        {
+          "id": 52,
+          "box": [
+            0.1,
+            0.3,
+            0.9,
+            0.8
+          ],
+          "status": "valid",
+          "status_text": "VALID",
+          "confirmed": true,
+          "reading": false,
+          "due_text": null
+        }
+      ]
+    },
+    "expected": [
+      {
+        "label": "Extinguisher · Dates not verified",
+        "status": "unverified",
+        "color": "A0A0A0"
+      }
+    ]
+  }
+]

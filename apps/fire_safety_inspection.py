@@ -20,7 +20,13 @@ Usage:
   python run.py inspect IMG_0451.MOV --process-fps 10 --proc-width 640
   python run.py inspect IMG_0451.MOV --set exits.fps=5 --set extinguishers.today=2026-12-01
   python run.py inspect IMG_0451.MOV --only extinguishers --no-display --stream
+  python run.py inspect IMG_0451.MOV --yoloe 11l --qwen 2b-fp8    # other models (see below)
+  python run.py inspect --list-models
   q / Esc quits, space pauses.
+
+Models: YOLOE and Qwen are chosen by short name from core/models.py (default 11s and 2b).
+The Qwen server serves one model; the inspection stops with the command to switch it
+when it serves a different one.
 """
 
 import argparse
@@ -39,6 +45,8 @@ from apps import exit_monitor, extinguisher_monitor
 from core import video_io
 from core.config import ROOT  # also loads .env
 from core.expiry import STATUS_TEXT as EXT_STATUS_TEXT
+from core.models import (DEFAULT_QWEN, DEFAULT_YOLOE, QWEN_MODELS, YOLOE_MODELS, qwen_label,
+                         qwen_repo, yoloe_file, yoloe_label)
 from core.qwen_assist import first_served_model
 from core.stream_view import MJPEGStreamer
 from core.video_io import LiveSource
@@ -51,7 +59,7 @@ TASKS = {"exits": exit_monitor, "extinguishers": extinguisher_monitor}
 DEFAULTS = {
     "input": {"source": "", "loop": False, "camera_size": [1920, 1080], "stream_timeout": 30.0},
     "processing": {"process_fps": 0.0, "proc_width": 960},
-    "models": {"yoloe_model": "yoloe-11s-seg.pt", "qwen": True, "qwen_url": "", "qwen_model": "",
+    "models": {"yoloe_model": DEFAULT_YOLOE, "qwen": True, "qwen_url": "", "qwen_model": DEFAULT_QWEN,
                "locate_anything": True, "locate_url": ""},
     "exits": {"enabled": True, "fps": 0.0, "imgsz": 640},
     "extinguishers": {"enabled": True, "fps": 0.0, "imgsz": 640},
@@ -135,6 +143,16 @@ def load_config(path: str = None, sets: list = ()) -> dict:
     return cfg
 
 
+def check_models(m: dict) -> None:
+    """[models] names are in core/models.py (or pass through as files / repo ids)."""
+    try:
+        yoloe_file(m["yoloe_model"])
+        if m["qwen_model"]:
+            qwen_repo(m["qwen_model"])
+    except ValueError as e:
+        raise SystemExit(f"  {e} (python run.py inspect --list-models)") from None
+
+
 def check_config(cfg: dict) -> None:
     """Values that would fail later, once the command line has been applied."""
     i, p, o = cfg["input"], cfg["processing"], cfg["output"]
@@ -145,6 +163,7 @@ def check_config(cfg: dict) -> None:
     if src.is_dir() or src.suffix.lower() in extinguisher_monitor.IMAGE_SUFFIXES:
         raise SystemExit("  The inspection needs a video, camera or stream. For photos: "
                          "python run.py extinguishers <photo | folder>")
+    check_models(cfg["models"])
     if not any(cfg[task]["enabled"] for task in TASKS):
         raise SystemExit("  Both tasks are off ([exits] / [extinguishers] enabled = false)")
     bad = [f"{s}.{k}" for s, k, ok in [
@@ -158,16 +177,58 @@ def check_config(cfg: dict) -> None:
         raise SystemExit(f"  Out of range: {', '.join(bad)} (see config.toml)")
 
 
+def _qwen_url(m: dict):
+    return (m["qwen_url"] or os.environ.get("QWEN_URL")) if m["qwen"] else None
+
+
 def _qwen_server(m: dict) -> tuple:
-    """→ (url, model) of the Qwen server, or (None, None) without Qwen."""
-    url = (m["qwen_url"] or os.environ.get("QWEN_URL")) if m["qwen"] else None
+    """→ (url, model) of the Qwen server, or (None, None) without Qwen. The server must
+    serve the model chosen in qwen_model ("" = whatever it serves)."""
+    url = _qwen_url(m)
     if not url:
         return None, None
+    name = m["qwen_model"]
     try:
-        return url, m["qwen_model"] or first_served_model(url)
+        served = first_served_model(url)
     except OSError as e:
         raise SystemExit(f"\n  Cannot reach Qwen at {url} ({getattr(e, 'reason', e)}).\n"
-                         "  Start it (bash server/start_laptop.sh), or set [models] qwen = false.") from None
+                         f"  Start it (bash server/start_laptop.sh {name}), "
+                         "or set [models] qwen = false.") from None
+    if name and qwen_repo(name).lower() != served.lower():
+        local = any(h in url for h in ("localhost", "127.0.0.1"))
+        how = (f"bash server/start_laptop.sh {name}" if local
+               else f"on the server: bash server/serve_qwen.sh {name}")
+        raise SystemExit(f"\n  Qwen at {url} serves {served}, not {qwen_repo(name)} "
+                         f"(qwen_model = \"{name}\").\n  Switch the server ({how}), or use "
+                         f"what it serves: --qwen {next((k for k, (r, _) in QWEN_MODELS.items() if r == served), served)}")
+    return url, served
+
+
+def list_models(cfg: dict) -> str:
+    """The choices for [models] yoloe_model / qwen_model, with what is selected, downloaded
+    and served now."""
+    m = cfg["models"]
+    try:
+        served = first_served_model(_qwen_url(m)) if _qwen_url(m) else None
+    except OSError:
+        served = None
+    yoloe = yoloe_file(m["yoloe_model"])
+    qwen = qwen_repo(m["qwen_model"]) if m["qwen_model"] else served
+    rows = ["  YOLOE — [models] yoloe_model or --yoloe (the first run downloads it into models/)"]
+    for key, file in YOLOE_MODELS.items():
+        marks = ["downloaded" if (ROOT / "models" / file).is_file() else "",
+                 "← selected" if file == yoloe else ""]
+        rows.append(f"    {key:<8} {file:<20} {'  '.join(x for x in marks if x)}")
+    rows += ["", "  Qwen3-VL — [models] qwen_model or --qwen; the server must serve it "
+                 "(bash server/start_laptop.sh <name>)"]
+    for key, (repo, gb) in QWEN_MODELS.items():
+        marks = ["served now" if repo == served else "", "← selected" if repo == qwen else ""]
+        rows.append(f"    {key:<8} {repo:<32} {gb:4.1f} GB  {'  '.join(x for x in marks if x)}")
+    if served and served not in (r for r, _ in QWEN_MODELS.values()):
+        rows.append(f"    {'':<8} {served:<32} served now (not in the list)")
+    rows += ["", "  The 8 GB laptop fits the 2B models next to YOLOE; 4B / 8B need a bigger GPU.",
+             f"  Qwen server: {_qwen_url(m) or 'OFF'}" + ("" if served or not _qwen_url(m) else " (not reachable)")]
+    return "\n".join(rows)
 
 
 # ── Inspection ────────────────────────────────────────────────────────────────
@@ -181,8 +242,11 @@ class FireSafetyInspection:
         m = cfg["models"]
         qwen_url, qwen_model = _qwen_server(m)
         locate_url = (m["locate_url"] or os.environ.get("LOCATE_URL")) if m["locate_anything"] else None
-        print(f"  Qwen: {f'{qwen_url} ({qwen_model})' if qwen_url else 'OFF'} | "
-              f"LocateAnything: {locate_url or 'OFF'} | YOLOE: {m['yoloe_model']}")
+        self.models = {"yoloe": yoloe_file(m["yoloe_model"]), "qwen": qwen_model,
+                       "locate_anything": locate_url}
+        print(f"  Models: {yoloe_label(self.models['yoloe'])} | "
+              f"Qwen: {f'{qwen_label(qwen_model)} @ {qwen_url}' if qwen_url else 'OFF'} | "
+              f"LocateAnything: {locate_url or 'OFF'}")
         # Two YOLOE models, not one with both prompt lists: YOLOE gives each box its best-
         # scoring prompt, so extinguisher decoys ("red bag", "red trash can") would take
         # obstacle boxes away from the exit rule.
@@ -211,7 +275,7 @@ class FireSafetyInspection:
             if key in options:
                 setattr(a, key, value)
         a.loop, a.proc_width = c["input"]["loop"], c["processing"]["proc_width"]
-        a.yoloe_model, a.qwen_url, a.qwen_model = c["models"]["yoloe_model"], qwen_url, qwen_model
+        a.yoloe_model, a.qwen_url, a.qwen_model = yoloe_file(c["models"]["yoloe_model"]), qwen_url, qwen_model
         a.no_display, a.stream, a.save = True, None, None    # the inspection owns these
         a.snapshots, a.log_frames, a.out_dir = o["snapshots"], o["log_frames"], o["out_dir"]
         return a
@@ -247,7 +311,7 @@ class FireSafetyInspection:
             W, H = int(W0 * scale) // 2 * 2, int(H0 * scale) // 2 * 2
             proc = frame if (W, H) == (W0, H0) else cv2.resize(frame, (W, H), interpolation=cv2.INTER_AREA)
         self._collect_events()
-        return proc, ran, now
+        return proc, ran, time.time()        # after the steps: records they made aren't "-0 s" old
 
     def _collect_events(self) -> None:
         """Copy the monitors' new events into one log, in the order they happened."""
@@ -387,7 +451,7 @@ class FireSafetyInspection:
         rep = {"source": self.cfg["input"]["source"], "frames": src.idx + 1, "processed": len(times),
                "dropped": src.dropped,
                "loop_ms": round(1000 * float(np.mean(times)), 1) if times else None,
-               "today": sub["extinguishers"]["today"] if self.ext else None,
+               "today": sub["extinguishers"]["today"] if self.ext else None, "models": self.models,
                "summary": {"exits": dict(Counter(e["final_status"] for e in exits)) if self.exits else None,
                            "extinguishers": dict(Counter(e["status"] for e in exts)) if self.ext else None},
                "exits": exits, "extinguishers": exts,
@@ -420,6 +484,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--set", action="append", default=[], metavar="SECTION.KEY=VALUE",
                     help="Override one setting, e.g. --set exits.hold=2 (repeatable)")
     ap.add_argument("--only", choices=list(TASKS), help="Run one task only")
+    ap.add_argument("--yoloe", default=None, metavar="NAME",
+                    help=f"YOLOE model: {', '.join(YOLOE_MODELS)} (default: [models] yoloe_model)")
+    ap.add_argument("--qwen", default=None, metavar="NAME",
+                    help=f"Qwen model: {', '.join(QWEN_MODELS)}; the server must serve it "
+                         "(default: [models] qwen_model)")
+    ap.add_argument("--list-models", action="store_true",
+                    help="Show the model choices, what is downloaded and what the Qwen server serves")
     ap.add_argument("--process-fps", type=float, default=None,
                     help="Frames per second taken from the source (0 = all it can)")
     ap.add_argument("--proc-width", type=int, default=None, help="Processing width in px")
@@ -440,6 +511,15 @@ def main():
         i["source"] = a.source
     if a.loop:
         i["loop"] = True
+    if a.yoloe:
+        cfg["models"]["yoloe_model"] = a.yoloe
+    if a.qwen is not None:
+        cfg["models"]["qwen_model"] = a.qwen
+        cfg["models"]["qwen"] = True
+    if a.list_models:
+        check_models(cfg["models"])
+        print(list_models(cfg))
+        return
     if a.only:
         for task in TASKS:
             cfg[task]["enabled"] = task == a.only

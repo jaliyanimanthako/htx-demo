@@ -380,7 +380,7 @@ sources: `width`, `height`, `fps`, `idx`, `dropped`, `reconnects`, `ended`.
 **Commands:**
 
 ```bash
-python tests/test_core.py                                   # 15/15 passed
+python tests/test_core.py                                   # 16/16 passed
 python run.py camera-check rtsp://$WIN:8554/live/x2 [--clock] [--no-display --seconds 30]
 python run.py exits rtsp://$WIN:8554/live/x2
 ```

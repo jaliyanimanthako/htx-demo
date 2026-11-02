@@ -41,6 +41,7 @@ from PIL import Image
 import core.config  # noqa: F401  (loads .env)
 from core.drawing import text_scale
 from core.expiry import SAFETY, STATUS_TEXT, assess, fmt_date, parse_answer, reclassify, status_for
+from core.models import qwen_label, yoloe_label
 from core.prompts import EXTINGUISHER_LOCATE_PROMPT, EXTINGUISHER_PROMPT, EXTINGUISHER_SYSTEM
 from core.qwen_assist import first_served_model
 from core.rules import box_iou, containment
@@ -90,7 +91,7 @@ class ExtinguisherDetector:
         from apps import yoloe_infer as Y
         from ultralytics import YOLOE
         self.names = EXT_CLASSES + DECOY_CLASSES
-        self.conf, self.imgsz = conf, imgsz
+        self.conf, self.imgsz, self.model_name = conf, imgsz, model_name
         self.device = Y._pick_device()
         print(f"  Loading YOLOE {model_name} on {self.device} ...")
         with Y._in_dir(Y.MODELS_DIR):
@@ -595,7 +596,8 @@ class ExtinguisherMonitor:
     def panel(self, width: int, vt: float, fps: float) -> np.ndarray:
         p = np.full((200, width, 3), 30, np.uint8)
         f = cv2.FONT_HERSHEY_SIMPLEX
-        mode = "YOLOE" + (" + Qwen" if self.reader else " (no Qwen)")
+        mode = yoloe_label(self.det.model_name) + (f" + {qwen_label(self.reader.engine.model_name)}"
+                                                   if self.reader else " (no Qwen)")
         cv2.putText(p, f"EXTINGUISHERS   t={vt:5.1f}s   {fps:4.1f} fps   [{mode}]   today {self.today}",
                     (12, 26), f, 0.7, (230, 230, 230), 2, cv2.LINE_AA)
         y = 56

@@ -20,6 +20,7 @@ import cv2                                                            # noqa: E4
 import numpy as np                                                    # noqa: E402
 
 from core import expiry, video_io                                     # noqa: E402
+from core import models                                               # noqa: E402
 from core.labels import kind_of                                      # noqa: E402
 from core.parsing import parse_response                               # noqa: E402
 from core.rules import assess, covers_door_base, merge_double_doors  # noqa: E402
@@ -62,6 +63,23 @@ def test_repeated_lines_deduplicated():
 def test_far_obstruction_dropped():
     d = parse_response("E C 775 0 1000 999\nO 1 floor office chair 230 725 430 999", W, H)
     assert [x["type"] for x in d] == ["exit"] and d[0]["status"] == "clear"
+
+
+def test_model_names():
+    assert models.yoloe_file("11L") == models.yoloe_file("yoloe-11l-seg.pt") == "yoloe-11l-seg.pt"
+    assert models.yoloe_file("my-weights.pt") == "my-weights.pt"            # own weights pass through
+    assert models.qwen_repo("4b-fp8") == "Qwen/Qwen3-VL-4B-Instruct-FP8"
+    assert models.qwen_repo("qwen3-vl-4b-instruct") == "Qwen/Qwen3-VL-4B-Instruct"
+    assert models.qwen_repo("org/other-vl") == "org/other-vl"
+    assert models.yoloe_label("yoloe-26s-seg.pt") == "YOLOE-26s"
+    assert models.qwen_label("Qwen/Qwen3-VL-2B-Instruct-FP8") == "Qwen3-VL-2B-FP8"
+    for bad in (lambda: models.yoloe_file("12s"), lambda: models.yoloe_file("yoloe-11s-seg-pf.pt"),
+                lambda: models.qwen_repo("3b")):
+        try:
+            bad()
+        except ValueError:
+            continue
+        raise AssertionError("expected ValueError")
 
 
 def test_rule_occlusion_counts_hidden_base():

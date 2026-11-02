@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Serve Qwen3-VL with vLLM as an OpenAI-compatible API on port 8000.
 #
-#   bash serve_qwen.sh [2b|4b|8b-fp8|8b]      (default: 4b)
+#   bash serve_qwen.sh [model]      (default: 4b)
 #
-# Sizes on a 24 GB RTX 4090 (weights only; the rest is KV cache):
-#   2b      Qwen/Qwen3-VL-2B-Instruct        ~4 GB   fastest, weakest
-#   4b      Qwen/Qwen3-VL-4B-Instruct        ~9 GB   good speed/quality start point
-#   8b-fp8  Qwen/Qwen3-VL-8B-Instruct-FP8    ~10 GB  same model as OpenRouter, FP8 (Ada supports it)
-#   8b      Qwen/Qwen3-VL-8B-Instruct        ~17 GB  full precision, tight on 24 GB
+# model: a name from core/models.py (python run.py inspect --list-models), a repo name such
+# as qwen3-vl-4b-instruct, or any other Hugging Face model id. Weights only (the rest of
+# the GPU share is KV cache); FP8 runs natively on Ada (RTX 40xx) and newer:
+#   2b      Qwen/Qwen3-VL-2B-Instruct        4.3 GB   fastest, weakest (the 8 GB laptop's model)
+#   2b-fp8  Qwen/Qwen3-VL-2B-Instruct-FP8    3.5 GB
+#   4b      Qwen/Qwen3-VL-4B-Instruct        8.9 GB   good speed/quality start point
+#   4b-fp8  Qwen/Qwen3-VL-4B-Instruct-FP8    6.0 GB
+#   8b-fp8  Qwen/Qwen3-VL-8B-Instruct-FP8    10.6 GB  same model as OpenRouter, FP8
+#   8b      Qwen/Qwen3-VL-8B-Instruct        17.5 GB  full precision, tight on 24 GB
 #
 # First start downloads the weights from Hugging Face (~5–17 GB).
 # Env overrides: PORT, MAX_LEN, GPU_UTIL, MAX_SEQS, ENV_DIR, CUDA_VISIBLE_DEVICES (pick the GPU),
@@ -27,17 +31,15 @@ if [ -n "${MM_MAX_SIDE:-}" ]; then
   MM_LIMIT="{\"image\": {\"count\": 1, \"width\": $MM_MAX_SIDE, \"height\": $MM_MAX_SIDE}, \"video\": 0}"
 fi
 
-case "${1:-4b}" in
-  2b)      MODEL="Qwen/Qwen3-VL-2B-Instruct" ;;
-  4b)      MODEL="Qwen/Qwen3-VL-4B-Instruct" ;;
-  8b-fp8)  MODEL="Qwen/Qwen3-VL-8B-Instruct-FP8" ;;
-  8b)      MODEL="Qwen/Qwen3-VL-8B-Instruct"; MAX_LEN="${MAX_LEN_8B:-4096}"; GPU_UTIL="${GPU_UTIL_8B:-0.95}" ;;
-  *)       MODEL="$1" ;;   # any other HF model id
-esac
-
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/_lib.sh"
+
+MODEL="$(qwen_lookup "${1:-4b}")" || exit 1
+MODEL="${MODEL% *}"
+if [ "$MODEL" = "Qwen/Qwen3-VL-8B-Instruct" ]; then
+  MAX_LEN="${MAX_LEN_8B:-4096}"; GPU_UTIL="${GPU_UTIL_8B:-0.95}"
+fi
 # First run (or a broken env): set it up automatically
 if [ -x "$ENV_DIR/.venv/bin/python" ] && ! "$ENV_DIR/.venv/bin/python" -c "import vllm" 2>/dev/null; then
   set_aside "$ENV_DIR/.venv"
@@ -72,7 +74,8 @@ port_busy() {
   python - "$1" <<'PY'
 import socket, sys
 s = socket.socket()
-try:
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)   # only a listening server counts, not
+try:                                                        # TIME_WAIT left by a stopped one
     s.bind(("0.0.0.0", int(sys.argv[1])))
 except OSError:
     sys.exit(0)   # busy

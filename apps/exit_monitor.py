@@ -45,6 +45,7 @@ import core.config  # noqa: F401  (loads .env)
 from core.depth_check import base_crop
 from core.drawing import text_scale
 from core.labels import DOOR_LABELS, OBSTACLE_LABELS, SIGN_LABELS, kind_of, norm_box_to_pixels
+from core.models import qwen_label, yoloe_label
 from core.parsing import STATUS_CODES
 from core.prompts import CONFIRM_PROMPT, DEPTH_PROMPT, VERDICT_PROMPT
 from core.qwen_assist import QwenAssist, first_served_model
@@ -92,7 +93,7 @@ class FastDetector:
     def __init__(self, model_name: str, imgsz: int = 640):
         from apps import yoloe_infer as Y
         from ultralytics import YOLOE
-        self.Y, self.imgsz = Y, imgsz
+        self.Y, self.imgsz, self.model_name = Y, imgsz, model_name
         self.device = Y._pick_device()
         self.names = Y.DOOR_CLASSES + Y.SIGN_CLASSES + Y.OBSTACLE_CLASSES + Y.DECOY_CLASSES
         self.kind = ({n: "door" for n in Y.DOOR_CLASSES} | {n: "sign" for n in Y.SIGN_CLASSES}
@@ -590,8 +591,9 @@ class ExitMonitor:
         h = 200
         p = np.full((h, width, 3), 30, np.uint8)
         f = cv2.FONT_HERSHEY_SIMPLEX
-        mode = ("YOLOE + " if self.fast else "") + ("LocateAnything" if self.locate else "") \
-            + (" + Qwen" if self.qwen else "")
+        mode = " + ".join(m for m in (yoloe_label(self.fast.model_name) if self.fast else None,
+                                      "LocateAnything" if self.locate else None,
+                                      qwen_label(self.qwen.model_name) if self.qwen else None) if m)
         cv2.putText(p, f"EXITS   t={vt:5.1f}s   {fps:4.1f} fps   [{mode}]", (12, 26), f, 0.7,
                     (230, 230, 230), 2, cv2.LINE_AA)
         y = 56

@@ -1,6 +1,6 @@
-Here's what to do on the camera and in DJI Mimo, in order. I took it from [docs/run.md](docs/run.md), [docs/live-camera.md](docs/live-camera.md) and the "DJI Pocket 3 to Python: Setup Guide" doc. The menu names come from that guide and may differ a little between Mimo versions.
+Here's what to do on the camera and in DJI Mimo, in order. I took it from [run.md](run.md), [live-camera.md](live-camera.md) and the "DJI Pocket 3 to Python: Setup Guide" doc. The menu names come from that guide and may differ a little between Mimo versions.
 
-**Before you touch the camera:** start MediaMTX on Windows (run.md step 1). Then run `ipconfig` and write down the **Windows Wi-Fi IPv4 address** (under "Wireless LAN adapter Wi-Fi", for example `192.168.1.23`). Mimo needs this address. Don't use the WSL `$WIN` address here.
+**Before you touch the camera:** start MediaMTX on Windows ([run.md](run.md) step 4). Mimo needs the laptop's **Windows Wi-Fi IPv4 address**: run.md step 2 prints it as the "DJI Mimo RTMP address" (you can also find it with `ipconfig`, under "Wireless LAN adapter Wi-Fi", for example `192.168.1.23`). It changes at every venue. Don't use the WSL `$WIN` address here.
 
 ## First time only
 
@@ -36,7 +36,7 @@ Here's what to do on the camera and in DJI Mimo, in order. I took it from [docs/
 8. Tap **Start Livestream**. On iPhone, allow Local Network access if asked.
 9. **Check the MediaMTX window.** It should show `is publishing to path 'live/x2'`. If nothing appears, the camera can't reach Windows (see below).
 10. Keep Mimo open with the phone screen on for the whole demo, and point the camera at the exit.
-11. Now run the WSL commands (run.md step 3: `start_laptop.sh`, then `apps/camera_check.py` or `apps/exit_monitor.py`).
+11. Now carry on with [run.md](run.md): connect the tablet (step 6) and run the inspection (step 7).
 
 ## Stopping
 
@@ -54,4 +54,4 @@ Press `q` in the Python window, tap stop in Mimo's livestream screen, close Medi
   - Check that the firewall rule for TCP 1935 exists.
 - **Frequent "stream lost — reconnecting":** the usual causes are weak Wi-Fi, the phone going to sleep, or the camera being hot or low on battery.
 
-This path hasn't been tried with the real camera yet, so your first run is also the test. To measure the delay, use `python run.py camera-check --clock`, which is described in [docs/live-camera.md](docs/live-camera.md).
+This path hasn't been tried with the real camera yet, so your first run is also the test. To measure the delay, use `python run.py camera-check --clock`, which is described in [live-camera.md](live-camera.md).

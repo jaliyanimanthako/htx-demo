@@ -10,7 +10,8 @@
 #   8b      Qwen/Qwen3-VL-8B-Instruct        ~17 GB  full precision, tight on 24 GB
 #
 # First start downloads the weights from Hugging Face (~5–17 GB).
-# Env overrides: PORT, MAX_LEN, GPU_UTIL, MAX_SEQS, ENV_DIR, CUDA_VISIBLE_DEVICES (pick the GPU)
+# Env overrides: PORT, MAX_LEN, GPU_UTIL, MAX_SEQS, ENV_DIR, CUDA_VISIBLE_DEVICES (pick the GPU),
+#   MM_MAX_SIDE (largest image side to reserve memory for; small GPUs, see start_laptop.sh)
 set -euo pipefail
 
 ENV_DIR="${ENV_DIR:-$HOME/qwen-vllm}"
@@ -18,6 +19,13 @@ PORT="${PORT:-8000}"
 MAX_LEN="${MAX_LEN:-8192}"
 GPU_UTIL="${GPU_UTIL:-0.90}"
 MAX_SEQS="${MAX_SEQS:-16}"
+# vLLM sizes its memory with the largest image the model accepts (~16k image tokens for
+# Qwen3-VL). Clients send at most 1280 px (apps/extinguisher_monitor.py; 640 px elsewhere),
+# so on an 8 GB GPU cap the profiled image to leave room for the KV cache.
+MM_LIMIT='{"image": 1, "video": 0}'
+if [ -n "${MM_MAX_SIDE:-}" ]; then
+  MM_LIMIT="{\"image\": {\"count\": 1, \"width\": $MM_MAX_SIDE, \"height\": $MM_MAX_SIDE}, \"video\": 0}"
+fi
 
 case "${1:-4b}" in
   2b)      MODEL="Qwen/Qwen3-VL-2B-Instruct" ;;
@@ -93,5 +101,5 @@ exec vllm serve "$MODEL" \
   --max-model-len "$MAX_LEN" \
   --gpu-memory-utilization "$GPU_UTIL" \
   --max-num-seqs "$MAX_SEQS" \
-  --limit-mm-per-prompt '{"image": 1, "video": 0}' \
+  --limit-mm-per-prompt "$MM_LIMIT" \
   --enable-prefix-caching

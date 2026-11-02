@@ -4,8 +4,8 @@ the server runs the pipeline on each frame and returns only JSON (boxes, exit
 statuses, new events). No video is streamed back, so the view never lags.
 
 Two modes (chosen in the "start" message):
-    exits         exit / obstruction monitor (exit_monitor.py)
-    extinguisher  fire extinguishers + expiry / service date (extinguisher_monitor.py)
+    exits         exit / obstruction monitor (apps/exit_monitor.py)
+    extinguisher  fire extinguishers + expiry / service date (apps/extinguisher_monitor.py)
 
 Frame message (binary WebSocket message), little-endian:
     uint32 seq | float64 video_time_s | JPEG bytes
@@ -24,7 +24,7 @@ import cv2
 import numpy as np
 
 from backend import settings
-from exit_monitor import ExitMonitor, build_parser
+from apps.exit_monitor import ExitMonitor, build_parser
 
 MODES = {
     # send_width / jpeg_quality: what the browser should send for this mode
@@ -107,7 +107,7 @@ class LiveSession:
         self.monitor = ExitMonitor(args, fast_detector=detectors("exits") if use_yoloe else None)
 
     def _init_extinguisher(self, detectors, use_qwen, options):
-        import extinguisher_monitor as X
+        from apps import extinguisher_monitor as X
         args = X.build_parser().parse_args(["live"])
         args.qwen_url = self._qwen_url(use_qwen)
         args.no_qwen = not args.qwen_url

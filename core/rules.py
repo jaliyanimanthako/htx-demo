@@ -1,7 +1,7 @@
 """
 Obstruction rule (shared)
 =========================
-Geometry used by detector-based runners (yoloe_infer.py, locate_live.py): each
+Geometry used by detector-based runners (apps/yoloe_infer.py, apps/locate_live.py): each
 exit gets a clearance zone (lower part of the door + floor strip in front of
 it); an obstacle obstructs the exit if it stands on the floor inside the zone
 and overlaps it enough. Status follows from how much of the door width the

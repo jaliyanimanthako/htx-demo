@@ -5,7 +5,7 @@ All VLM prompts in one place.
   USER_TEXT                          per-frame instruction (repeats the format for small models)
   DEPTH_PROMPT                       close-up "floor or raised surface?" check
   NAME_PROMPT                        Qwen names objects at the door (for LocateAnything)
-  CONFIRM_PROMPT / VERDICT_PROMPT    exit_monitor.py event questions
+  CONFIRM_PROMPT / VERDICT_PROMPT    apps/exit_monitor.py event questions
 
 Answer formats are parsed by core/parsing.py — keep them in sync.
 """
@@ -162,7 +162,7 @@ VERDICT_PROMPT = ("Look at the door in the middle of this image. Is anything on 
                   "C = clear, P = partially blocked (a person can still pass), B = blocked.")
 
 
-# ── Fire-extinguisher mode (extinguisher_monitor.py; parsed by core/expiry.py) ──
+# ── Fire-extinguisher mode (apps/extinguisher_monitor.py; parsed by core/expiry.py) ──
 # Two steps: find the dated sticker / tag on the extinguisher crop, then read a tight,
 # upscaled crop of it. Qwen only COPIES the date and the words next to it; the meaning
 # (next service, last service, expiry, …) is decided in code (core/expiry.py) — a 4B

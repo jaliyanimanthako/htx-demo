@@ -13,14 +13,14 @@ the boxes are carried from frame t to the current frame by tracking camera
 motion frame-to-frame (optical flow + similarity transform) and warping them.
 
 Sources:
-  python live_infer.py <video_file>             # recorded video as a live stream
-  python live_infer.py <video_file> --loop      # replay it continuously (q to stop)
-  python live_infer.py <video_file> --delay 8   # buffered: show 8 s behind live, 10 calls
+  python run.py live <video_file>             # recorded video as a live stream
+  python run.py live <video_file> --loop      # replay it continuously (q to stop)
+  python run.py live <video_file> --delay 8   # buffered: show 8 s behind live, 10 calls
                                                 # in parallel, a result for every ~0.5 s
-  python live_infer.py 0                        # webcam 0
-  python live_infer.py rtsp://user:pass@ip/...  # IP camera
-  python live_infer.py <video_file> --provider local --interval 0.3   # self-hosted vLLM (4090)
-  python live_infer.py <video_file> --no-display --stream --loop   # headless: watch in a browser
+  python run.py live 0                        # webcam 0
+  python run.py live rtsp://user:pass@ip/...  # IP camera
+  python run.py live <video_file> --provider local --interval 0.3   # self-hosted vLLM (4090)
+  python run.py live <video_file> --no-display --stream --loop   # headless: watch in a browser
 
 Options:
   --save results/live.mp4    also record the side-by-side view

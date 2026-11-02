@@ -14,11 +14,11 @@ Fire-extinguisher monitor — find extinguishers and read their expiry / service
 Too-small extinguishers are not sent to Qwen (the hint says "move closer").
 
 Usage:
-  python extinguisher_monitor.py IMG_0454.MOV                 # QWEN_URL from .env
-  python extinguisher_monitor.py IMG_0454.MOV --qwen-url http://<server-ip>:8010/v1
-  python extinguisher_monitor.py tag_photo.jpg                # one photo (or a folder)
-  python extinguisher_monitor.py IMG_0454.MOV --no-qwen       # detection only
-  python extinguisher_monitor.py IMG_0454.MOV --today 2026-12-01 --monthfirst
+  python run.py extinguishers IMG_0454.MOV                 # QWEN_URL from .env
+  python run.py extinguishers IMG_0454.MOV --qwen-url http://<server-ip>:8010/v1
+  python run.py extinguishers tag_photo.jpg                # one photo (or a folder)
+  python run.py extinguishers IMG_0454.MOV --no-qwen       # detection only
+  python run.py extinguishers IMG_0454.MOV --today 2026-12-01 --monthfirst
   q / Esc quits, space pauses.
 """
 
@@ -47,7 +47,7 @@ from core.rules import box_iou, containment
 from core.stream_view import MJPEGStreamer
 from core.video_io import LiveSource, MotionCompensator
 from engines.qwen_engine import QwenEngine
-from exit_monitor import Tracker   # shared IoU tracker with camera-motion compensation
+from apps.exit_monitor import Tracker   # shared IoU tracker with camera-motion compensation
 
 EXT_CLASSES = ["fire extinguisher"]
 # similar-looking things YOLOE should label as something else
@@ -87,7 +87,7 @@ class ExtinguisherDetector:
     """YOLOE with text prompts: fire extinguishers (+ decoys that are thrown away)."""
 
     def __init__(self, model_name: str, conf: float = 0.3, imgsz: int = 640):
-        import yoloe_infer as Y
+        from apps import yoloe_infer as Y
         from ultralytics import YOLOE
         self.names = EXT_CLASSES + DECOY_CLASSES
         self.conf, self.imgsz = conf, imgsz
@@ -274,6 +274,13 @@ class ExtinguisherMonitor:
     def _note(self, text: str) -> None:
         if self.args.log_frames:                 # per-frame log line (CLI); off in the backend
             self._log.append(text)
+
+    def frame_log(self, info) -> str:
+        """What happened since the last call (YOLOE, Qwen reads, extinguishers in view), one line."""
+        log, self._log = self._log, []
+        vis = [r for r in self.recs.values() if r.visible]
+        return (f"YOLOE {info[0]} det {info[1]:3.0f}ms | Qwen: {' '.join(log) or '-'} | "
+                f"{', '.join(f'#{r.id} {STATUS_TEXT[r.status]}' for r in vis) or 'none in view'}")
 
     def reset(self) -> None:
         """Forget tracks and extinguishers (new video / camera). Events are kept."""
@@ -629,11 +636,7 @@ class ExtinguisherMonitor:
                 times.append(time.time() - t0)
                 fps = 1.0 / max(1e-3, np.mean(times[-30:]))
                 if a.log_frames:
-                    log, self._log = self._log, []
-                    vis = [r for r in self.recs.values() if r.visible]
-                    print(f"  f{idx:5d} t={vt:6.2f}s {1000 * times[-1]:4.0f}ms | YOLOE {info[0]} det "
-                          f"{info[1]:3.0f}ms | Qwen: {' '.join(log) or '-'} | "
-                          f"{', '.join(f'#{r.id} {STATUS_TEXT[r.status]}' for r in vis) or 'none in view'}",
+                    print(f"  f{idx:5d} t={vt:6.2f}s {1000 * times[-1]:4.0f}ms | {self.frame_log(info)}",
                           flush=True)
                 H, W = frame.shape[:2]
                 half = min(W, 800)

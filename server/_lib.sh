@@ -46,12 +46,14 @@ ensure_uv() {
 }
 
 # new_venv DIR PYVER → create a fresh virtualenv at DIR with Python PYVER using uv
-# (an existing DIR is moved aside first, never deleted)
+# (an existing DIR is moved aside first, never deleted). Always uv's own Python build:
+# it ships the C headers (Python.h) that Triton compiles against when vLLM starts — a
+# distro Python often lacks them (python3.X-dev), and vLLM then fails at start-up.
 new_venv() {
   local dir="$1" ver="$2" uv
   uv="$(ensure_uv)" || return 1
   [ -e "$dir" ] && set_aside "$dir"
-  "$uv" venv --python "$ver" "$dir"
+  "$uv" venv --python "$ver" --python-preference only-managed "$dir"
 }
 
 # ── terminal UI: colours + spinner only on a real terminal (plain text in log files) ──

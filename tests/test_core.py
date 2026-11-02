@@ -4,14 +4,22 @@ Offline tests for the core logic (no GPU, no network):
     python tests/test_core.py        # or: python -m pytest tests
 """
 
+import contextlib
+import io
 import sys
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from datetime import date                                             # noqa: E402
 
-from core import expiry                                               # noqa: E402
+import cv2                                                            # noqa: E402
+import numpy as np                                                    # noqa: E402
+
+from core import expiry, video_io                                     # noqa: E402
 from core.labels import kind_of                                      # noqa: E402
 from core.parsing import parse_response                               # noqa: E402
 from core.rules import assess, covers_door_base, merge_double_doors  # noqa: E402
@@ -125,6 +133,58 @@ def test_expiry_answer_and_status():
     assert expiry.assess(a["dates"], today)["status"] == "unclear"
     assert expiry.parse_answer("NONE too_small") == {"dates": [], "none": "too_small"}
     assert expiry.parse_answer("I cannot see it")["none"] == "unreadable"
+
+
+@contextlib.contextmanager
+def _fast_reconnect():
+    delay, video_io.RECONNECT_DELAY = video_io.RECONNECT_DELAY, 0.05
+    try:
+        yield
+    finally:
+        video_io.RECONNECT_DELAY = delay
+
+
+def test_live_source_stream_mode():
+    # a "file:" URL is not a local path, so it takes the webcam / stream code path;
+    # at the end of the file the reader sees a dropped stream and reconnects
+    with tempfile.TemporaryDirectory() as d, _fast_reconnect():
+        path = Path(d) / "synth.avi"
+        out = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 25, (320, 240))
+        for i in range(60):
+            out.write(np.full((240, 320, 3), i * 4, np.uint8))
+        out.release()
+        halt, log = threading.Event(), io.StringIO()
+        with contextlib.redirect_stdout(log):
+            src = video_io.LiveSource(f"file:{path}", halt=halt, timeout=5)
+            try:
+                assert (src.width, src.height, src.fps) == (320, 240, 25.0)
+                last, deadline = -1, time.time() + 5
+                while src.idx < 150 and time.time() < deadline:   # 60-frame file → reconnected
+                    idx, frame, skipped = src.read()
+                    assert idx == last + skipped + 1 and frame.shape == (240, 320, 3)
+                    last = idx
+                assert src.idx >= 150 and src.reconnects >= 2 and src.video_time() > 0
+                halt.set()
+                assert src.read() == (None, None, 0)
+            finally:
+                src.release()
+        assert not src._thread.is_alive()
+        assert "stream lost" in log.getvalue() and "stream back" in log.getvalue()
+
+
+def test_live_source_no_stream():
+    t, level = time.time(), cv2.utils.logging.getLogLevel()
+    cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)   # one warning per attempt
+    with _fast_reconnect(), contextlib.redirect_stdout(io.StringIO()):
+        try:
+            video_io.LiveSource("file:/nonexistent/none.avi", timeout=1)
+        except RuntimeError as e:
+            assert "No frames" in str(e)
+        else:
+            raise AssertionError("expected RuntimeError")
+        finally:
+            cv2.utils.logging.setLogLevel(level)
+    assert time.time() - t < 3
 
 
 if __name__ == "__main__":

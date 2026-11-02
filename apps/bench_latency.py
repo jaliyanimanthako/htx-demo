@@ -10,9 +10,9 @@ For each image size it reports:
 and saves one annotated frame per size so you can check the boxes.
 
 Usage (from the Mac, against the 4090 server):
-  python bench_latency.py IMG_0450.MOV --provider local --base-url http://<server-ip>:8000/v1
-  python bench_latency.py IMG_0450.MOV --provider local --sizes 448 640 --concurrency 1 4 8
-  python bench_latency.py IMG_0450.MOV --provider openrouter          # baseline for comparison
+  python run.py bench IMG_0450.MOV --provider local --base-url http://<server-ip>:8000/v1
+  python run.py bench IMG_0450.MOV --provider local --sizes 448 640 --concurrency 1 4 8
+  python run.py bench IMG_0450.MOV --provider openrouter          # baseline for comparison
 """
 
 import argparse

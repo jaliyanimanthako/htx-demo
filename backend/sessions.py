@@ -13,7 +13,7 @@ import uuid
 import cv2
 
 from backend import settings
-from exit_monitor import ExitMonitor, FastDetector, build_parser
+from apps.exit_monitor import ExitMonitor, FastDetector, build_parser
 
 STREAMS = ("original", "annotated", "combined")
 _URL = re.compile(r"^(rtsp|rtsps|rtmp|http|https)://", re.I)
@@ -88,6 +88,9 @@ class Session:
             self.monitor.run()
             self.status = "stopped" if self._stop_requested else "finished"
         except Exception as e:                       # models down, bad stream, …
+            if self._stop_requested:                 # stopped while waiting for a stream
+                self.status = "stopped"
+                return
             self.status, self.error = "error", f"{type(e).__name__}: {e}"
             print(f"  [session {self.id}] error: {self.error}")
 
@@ -155,7 +158,7 @@ class SessionManager:
         if mode == "exits":
             return self._fast_detector()
         if self._ext is None:
-            import extinguisher_monitor as X
+            from apps import extinguisher_monitor as X
             a = X.build_parser().parse_args(["x"])
             self._ext = X.ExtinguisherDetector(a.yoloe_model, a.conf)
         return self._ext

@@ -26,13 +26,13 @@ Per frame:
 Input is treated as a live stream (same pacing as live_infer.py).
 
 Usage:
-  python yoloe_infer.py <video_file>                    # recorded video as live stream
-  python yoloe_infer.py <video_file> --loop             # replay continuously
-  python yoloe_infer.py 0                               # webcam
-  python yoloe_infer.py <video_file> --save results/yoloe.mp4
-  python yoloe_infer.py <video_file> --zones            # draw clearance zones (tuning)
-  python yoloe_infer.py <video_file> --all-doors        # also doors without an EXIT sign
-  python yoloe_infer.py <video_file> --model yoloe-11l-seg.pt   # bigger / more accurate
+  python run.py yoloe <video_file>                    # recorded video as live stream
+  python run.py yoloe <video_file> --loop             # replay continuously
+  python run.py yoloe 0                               # webcam
+  python run.py yoloe <video_file> --save results/yoloe.mp4
+  python run.py yoloe <video_file> --zones            # draw clearance zones (tuning)
+  python run.py yoloe <video_file> --all-doors        # also doors without an EXIT sign
+  python run.py yoloe <video_file> --model yoloe-11l-seg.pt   # bigger / more accurate
   q / Esc quits, space pauses.
 """
 
@@ -49,12 +49,13 @@ import numpy as np
 import torch
 from ultralytics import YOLOE
 
+from core.config import ROOT
 from core.drawing import caption, draw_detections, draw_status_banner, summarize, text_scale
 from core.rules import (assess, box_iou, clearance_zone, containment, merge_double_doors,
                         to_bbox_dict)
 from core.video_io import LiveSource, MotionCompensator
 
-MODELS_DIR = Path(__file__).parent / "models"
+MODELS_DIR = ROOT / "models"
 PROC_WIDTH = 960   # frames are downscaled to this width for detection + drawing
 
 # ── Prompts (edit freely) ─────────────────────────────────────────────────────

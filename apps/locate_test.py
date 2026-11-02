@@ -5,9 +5,9 @@ Runs LocateAnything-3B (server/serve_locate.sh) on frames sampled from a video,
 prints the raw answer + timing per frame, and saves a grid of annotated frames.
 
 Usage:
-  python locate_test.py IMG_0450.MOV --url http://<server-ip>:8020
-  python locate_test.py IMG_0450.MOV --url ... --mode fast --n 6
-  python locate_test.py IMG_0450.MOV --url ... --categories "door,exit sign,office chair,cardboard box"
+  python run.py locate-test IMG_0450.MOV --url http://<server-ip>:8020
+  python run.py locate-test IMG_0450.MOV --url ... --mode fast --n 6
+  python run.py locate-test IMG_0450.MOV --url ... --categories "door,exit sign,office chair,cardboard box"
 """
 
 import argparse

@@ -14,9 +14,9 @@ objects every frame and shows the result live.
 | **LocateAnything-3B** (NVIDIA) | Accurate boxes, finds what YOLOE misses | ~1 per 1.5–2 s (server GPU 1) |
 | **Qwen3-VL-4B-Instruct** (vLLM) | Scene understanding: is it an exit? on the floor? blocked? | only on events (server GPU 0) |
 
-![exit_monitor.py on a recorded walkthrough](docs/demo.gif)
+![apps/exit_monitor.py on a recorded walkthrough](docs/demo.gif)
 
-*`exit_monitor.py` on `IMG_0450.MOV`: original (left), annotated (right), exit panel and
+*`apps/exit_monitor.py` on `IMG_0450.MOV`: original (left), annotated (right), exit panel and
 event log (bottom). The exit is confirmed by Qwen and turns **BLOCKED** (chairs, cardboard
 boxes, bin); items on desks are dropped by the floor check.*
 
@@ -43,7 +43,7 @@ boxes, bin); items on desks are dropped by the floor check.*
 
 ## Architecture
 
-`exit_monitor.py` combines fast detection, object tracking and background model
+`apps/exit_monitor.py` combines fast detection, object tracking and background model
 checks to show whether each exit is clear or obstructed.
 
 ![Horizontal architecture diagram of the exit obstruction monitor](docs/architecture.svg)
@@ -93,7 +93,7 @@ fixed list can be found too.
 decides what it *means* (is it an exit, is it on the floor, is it blocked).
 
 **A simpler option.** `--no-yoloe` runs LocateAnything + Qwen only
-(`python exit_monitor.py <video> --no-yoloe`). Results are more accurate per update
+(`python run.py exits <video> --no-yoloe`). Results are more accurate per update
 but ~1–2 s old, and IDs are less stable on fast camera moves. It is a good starting
 point when a 2 s update interval is acceptable (a walkthrough inspection, not alarms)
 or when you do not want to install YOLOE. Compare the two on the same video.
@@ -103,14 +103,20 @@ or when you do not want to install YOLOE. Compare the two on the same video.
 ## Repository layout
 
 ```
-exit_monitor.py      MAIN: YOLOE + LocateAnything + Qwen, exit memory, panel, report
-extinguisher_monitor.py  fire extinguishers: YOLOE + Qwen reads the expiry / service date (CLI)
-locate_live.py       LocateAnything (+ optional Qwen assist) live, position rule
-live_infer.py        Qwen-only live (prompt → boxes + status); --delay buffered mode
-video_infer.py       Qwen-only offline: process a recorded video, side-by-side output
-yoloe_infer.py       YOLOE-only live (local, no server)
-bench_latency.py     Benchmark a VLM endpoint (TTFT, latency, throughput)
-locate_test.py       Run LocateAnything on sampled frames, save an annotated grid
+run.py               the single entry point: python run.py <command> [options]
+config.toml          settings for python run.py inspect (frame rates, resolution, models, rules, output)
+
+apps/                the programs (run.py command in brackets)
+  fire_safety_inspection.py  [inspect] exits + extinguishers on the same frames, one report
+  exit_monitor.py      [exits] MAIN: YOLOE + LocateAnything + Qwen, exit memory, panel, report
+  extinguisher_monitor.py  [extinguishers] YOLOE + Qwen reads the expiry / service date
+  locate_live.py       [locate-live] LocateAnything (+ optional Qwen assist) live, position rule
+  live_infer.py        [live] Qwen-only live (prompt → boxes + status); --delay buffered mode
+  video_infer.py       [video] Qwen-only offline: process a recorded video, side-by-side output
+  yoloe_infer.py       [yoloe] YOLOE-only live (local, no server)
+  bench_latency.py     [bench] benchmark a VLM endpoint (TTFT, latency, throughput)
+  locate_test.py       [locate-test] LocateAnything on sampled frames, annotated grid
+  camera_check.py      [camera-check] camera / stream without models: fps, drops, latency clock
 
 core/                shared library (no entry points)
   config.py          .env loading, VLM provider presets
@@ -122,14 +128,14 @@ core/                shared library (no entry points)
   qwen_detect.py     one full-frame Qwen detection call
   qwen_assist.py     Qwen naming objects for LocateAnything + depth check
   labels.py          LocateAnything categories
-  video_io.py        LiveSource (file paced as live / webcam / RTSP), camera motion
+  video_io.py        LiveSource (file paced as live; webcam / stream: newest frame, reconnect), camera motion
   drawing.py         boxes, banner, captions
   stream_view.py     MJPEG browser view (--stream)
 engines/
   qwen_engine.py     OpenAI-compatible VLM client (vLLM, OpenRouter, DashScope, OpenAI)
   locate_engine.py   LocateAnything server client + answer parser
 server/              GPU-server scripts: start_all.sh / status.sh / stop_all.sh, setup, serve
-tests/test_core.py   offline tests for parsing / rules / LocateAnything output
+tests/test_core.py   offline tests for parsing / rules / LocateAnything output / live input
 backend/             FastAPI service: live mode (frames in, boxes out), sessions, token auth
 frontend/            web app (index.html, style.css, app.js) — talks to backend/
 ```
@@ -151,7 +157,7 @@ cd htx_demo
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.sample .env          # then fill in the server addresses
-.venv/bin/python tests/test_core.py    # offline sanity check: should print 13/13 passed
+.venv/bin/python tests/test_core.py    # offline sanity check: should print 15/15 passed
 ```
 
 The first YOLOE run downloads `yoloe-11s-seg.pt` and the MobileCLIP text encoder
@@ -195,6 +201,15 @@ Services that are already running are left alone, so it is safe to run again.
 bash server/status.sh             # what is up, ports, GPU memory
 bash server/stop_all.sh           # stop everything   (or: stop_all.sh backend)
 tmux attach -t backend            # watch a service (Ctrl+B then D to leave)
+```
+
+**Single 8 GB GPU (e.g. an RTX 4060 laptop running everything itself).** LocateAnything-3B
+(~7.7 GB of weights) and Qwen-4B (~8.9 GB) don't fit, so `start_all.sh` can't be used.
+Serve Qwen3-VL-2B alone, sized to leave room for YOLOE, and run the monitors on the same
+machine with `QWEN_URL=http://localhost:8000/v1` and no `LOCATE_URL`:
+
+```bash
+bash server/start_laptop.sh       # Qwen3-VL-2B in tmux 'qwen' on :8000; start before the monitors
 ```
 
 The sections below are the same steps done manually.
@@ -265,13 +280,18 @@ If the ports are not reachable from the client, tunnel them:
 
 ## Running
 
-### Main: `exit_monitor.py`
+Every program starts from `run.py` in the project root: `python run.py` lists the
+commands, `python run.py <command> -h` shows a command's options. The code is in `apps/`
+(`python -m apps.<module>` works too). The old script names also work as commands, for
+example `python run.py exit_monitor IMG_0451.MOV`.
+
+### Main: `apps/exit_monitor.py`
 
 ```bash
-.venv/bin/python exit_monitor.py IMG_0451.MOV            # URLs from .env
-.venv/bin/python exit_monitor.py IMG_0451.MOV --loop --save results/run.mp4
-.venv/bin/python exit_monitor.py IMG_0451.MOV --no-yoloe # LocateAnything + Qwen only
-.venv/bin/python exit_monitor.py IMG_0451.MOV --no-display --stream   # browser :8090
+.venv/bin/python run.py exits IMG_0451.MOV            # URLs from .env
+.venv/bin/python run.py exits IMG_0451.MOV --loop --save results/run.mp4
+.venv/bin/python run.py exits IMG_0451.MOV --no-yoloe # LocateAnything + Qwen only
+.venv/bin/python run.py exits IMG_0451.MOV --no-display --stream   # browser :8090
 ```
 
 Window: original | annotated video, and a panel listing each exit (status, for how
@@ -310,7 +330,7 @@ snapshot per exit, all events) and `exit<id>_<time>_<status>.jpg` snapshots.
 
 The detection pipeline runs as a **FastAPI service on the GPU server** (API only). The
 web app is hosted **separately**, on whatever machine you like, and connects to the
-backend with its address and token. The detection code is the same as `exit_monitor.py`.
+backend with its address and token. The detection code is the same as `apps/exit_monitor.py`.
 
 **Live mode (default).** The video plays **in the browser**, from a local file or the
 camera. The web app sends small JPEG frames (960 px wide) to the server over one
@@ -342,8 +362,8 @@ the **Token**, then click **Connect**. Pick a **mode**, then **Open video** (or
 
 | Mode | What it does | Models | Frames sent |
 |---|---|---|---|
-| **Exit obstruction** | exits and what blocks them (`exit_monitor.py`) | YOLOE + LocateAnything + Qwen | 960 px, JPEG 0.75 |
-| **Fire extinguisher** | extinguishers and their expiry or service date (`extinguisher_monitor.py`) | YOLOE + Qwen | 1920 px, JPEG 0.9 |
+| **Exit obstruction** | exits and what blocks them (`apps/exit_monitor.py`) | YOLOE + LocateAnything + Qwen | 960 px, JPEG 0.75 |
+| **Fire extinguisher** | extinguishers and their expiry or service date (`apps/extinguisher_monitor.py`) | YOLOE + Qwen | 1920 px, JPEG 0.9 |
 
 The server tells the browser which frame size to send. Extinguisher mode needs full
 resolution to read the sticker, so it uses about 4× the bandwidth (fine on a LAN). If
@@ -397,18 +417,18 @@ request and response examples, is in [Backend API reference](#backend-api-refere
 | `BACKEND_MAX_SESSIONS` | `1` | concurrent sessions, live ones included (one GPU pipeline) |
 | `LOCATE_URL`, `QWEN_URL` | from the port files | model servers (localhost on the server) |
 
-`exit_monitor.py --stream` still works for quick checks: an all-in-one browser view
+`python run.py exits --stream` still works for quick checks: an all-in-one browser view
 (`/stream`), plus `/stream/original`, `/stream/annotated` and `/state`.
 
-### Fire extinguishers: `extinguisher_monitor.py` (CLI, first version)
+### Fire extinguishers: `apps/extinguisher_monitor.py` (CLI, first version)
 
 This tool finds fire extinguishers and reads the expiry or service date on their label
 or inspection tag. It needs only YOLOE and the Qwen server; LocateAnything is not used.
 
 ```bash
-.venv/bin/python extinguisher_monitor.py IMG_0454.MOV            # video (QWEN_URL from .env)
-.venv/bin/python extinguisher_monitor.py tag.jpg                 # a photo, or a folder of photos
-.venv/bin/python extinguisher_monitor.py IMG_0454.MOV --no-qwen  # detection only
+.venv/bin/python run.py extinguishers IMG_0454.MOV            # video (QWEN_URL from .env)
+.venv/bin/python run.py extinguishers tag.jpg                 # a photo, or a folder of photos
+.venv/bin/python run.py extinguishers IMG_0454.MOV --no-qwen  # detection only
 ```
 
 How it works:
@@ -470,25 +490,91 @@ Results with Qwen3-VL-4B on the walk-by videos, at about 1.5 s per read:
 A date is read only when the sticker is close (the extinguisher fills about a third or
 more of the frame height). A second or two of steady view is enough.
 
+### Fire safety inspection: both at once (`apps/fire_safety_inspection.py`)
+
+`python run.py inspect` runs the exit monitor and the extinguisher monitor on the same
+frames, from one camera or video. Each frame goes through both. They share one view, one
+event log and one report.
+
+```bash
+python run.py inspect IMG_0451.MOV                         # settings from config.toml
+python run.py inspect rtsp://<windows-host>:8554/live/x2 --save results/inspection.mp4
+python run.py inspect IMG_0451.MOV --process-fps 10 --proc-width 640
+python run.py inspect IMG_0451.MOV --set exits.fps=5 --set extinguishers.today=2026-12-01
+python run.py inspect IMG_0451.MOV --only extinguishers --no-display --stream
+```
+
+**Settings: `config.toml`** (project root). Every setting is commented there. Settings
+left out use their defaults.
+
+| Section | What it sets |
+|---|---|
+| `[input]` | `source`, `loop`, `camera_size` (asked of a webcam), `stream_timeout` |
+| `[processing]` | `process_fps`: frames per second taken from the source (0 = all it can; frames in between are skipped). `proc_width`: processing width for tracking and drawing |
+| `[models]` | YOLOE weights; Qwen and LocateAnything on/off and their URLs (default: `.env`) |
+| `[exits]`, `[extinguishers]` | `enabled`; `fps`, a rate cap per task (its boxes stay put on the frames it skips); `imgsz`, the YOLOE input size; plus any option of that monitor, named as in its `--help` with `-` → `_` (`hold`, `min_px`, `soon_days`, `today`, …) |
+| `[output]` | window, `show_original`, `view_width`, `save`, `stream`, snapshots, per-frame log, `out_dir` |
+
+The command line wins over the file: `--process-fps`, `--proc-width`, `--only`, `--save`,
+`--stream`, `--loop`, `--no-display`, `--quiet`, and `--set SECTION.KEY=VALUE` for
+anything else. `--config FILE` uses another settings file. Unknown settings and wrong
+types stop the run with the list of valid names.
+
+Each task keeps its own YOLOE model, tracker and Qwen jobs, and both share the Qwen
+server. There are two YOLOE models rather than one with both prompt lists, because
+YOLOE gives each box its single best-scoring prompt. The extinguisher decoys ("red
+bag", "red trash can") would then take obstacle boxes away from the exit rule.
+
+**Output**: the window shows original | annotated (both overlays), then the exit panel
+and the extinguisher panel. The log prints one line per frame, with the `EXITS …` and
+`EXT …` parts separated by `||`. Reports go to `results/fire_safety_<video>/`:
+`report.json` (summary counts, all exits, all extinguishers, one event log tagged by
+task, the settings used), and each task's own report and snapshots in `exits/` and
+`extinguishers/`. Photos still go through `python run.py extinguishers`.
+
+Measured on the dev laptop (RTX 4060 8 GB, YOLOE + Qwen3-VL-2B, 800×448 test clip):
+about 42 ms per frame with both tasks, against about 29 ms for exits alone. That is
+about 23 fps, so a 25–30 fps camera drops some frames. GPU memory peaked at 7.2 of 8 GB.
+
 ### Other runners
 
 | Script | What it does | Example |
 |---|---|---|
-| `locate_live.py` | LocateAnything every ~1.5–2 s + position rule; `--qwen-url` adds Qwen naming + depth check | `python locate_live.py IMG_0451.MOV --url http://<srv>:8020 --qwen-url http://<srv>:8010/v1` |
-| `live_infer.py` | Qwen detects exits + obstructions from the prompt; results shown live, boxes motion-compensated | `python live_infer.py IMG_0451.MOV --provider local --interval 0.2 --workers 4` |
-| `live_infer.py --delay N` | buffered: plays N s behind live so every frame has a fresh result | `python live_infer.py IMG_0451.MOV --provider local --delay 4` |
-| `video_infer.py` | offline: parallel calls over a recorded video → side-by-side mp4 + JSON | `python video_infer.py IMG_0450.MOV --provider local --play` |
-| `yoloe_infer.py` | YOLOE + position rule only, no server | `python yoloe_infer.py IMG_0450.MOV` |
+| `apps/locate_live.py` | LocateAnything every ~1.5–2 s + position rule; `--qwen-url` adds Qwen naming + depth check | `python run.py locate-live IMG_0451.MOV --url http://<srv>:8020 --qwen-url http://<srv>:8010/v1` |
+| `apps/live_infer.py` | Qwen detects exits + obstructions from the prompt; results shown live, boxes motion-compensated | `python run.py live IMG_0451.MOV --provider local --interval 0.2 --workers 4` |
+| `apps/live_infer.py` with `--delay N` | buffered: plays N s behind live so every frame has a fresh result | `python run.py live IMG_0451.MOV --provider local --delay 4` |
+| `apps/video_infer.py` | offline: parallel calls over a recorded video → side-by-side mp4 + JSON | `python run.py video IMG_0450.MOV --provider local --play` |
+| `apps/yoloe_infer.py` | YOLOE + position rule only, no server | `python run.py yoloe IMG_0450.MOV` |
 
 `--provider` for the Qwen runners: `local` (your vLLM server, from `LOCAL_VLM_URL`),
 `openrouter` (default, `qwen/qwen3-vl-8b-instruct`), `qwen` (DashScope), `openai`.
 All live runners accept `--stream`, `--save`, `--loop`, `--no-display`.
 
+### Live camera (DJI Osmo Pocket 3)
+
+Every runner takes a live camera as its source: a stream URL or a webcam index. For the
+Pocket 3 over Wi-Fi, the camera pushes RTMP to a MediaMTX server, and the runners read
+it back as RTSP:
+
+```bash
+python run.py camera-check rtsp://<host>:8554/live/x2           # picture, fps, drops, reconnects; no models
+python run.py camera-check rtsp://<host>:8554/live/x2 --clock   # film the window to measure latency
+python run.py exits rtsp://<host>:8554/live/x2
+python run.py exits 0                                    # USB webcam mode
+```
+
+For webcams and streams, `core/video_io.py:LiveSource` always processes the newest frame,
+so delay can't build up when processing is slower than the camera. It reconnects when the
+stream drops and ends the run after 30 s without frames. Times in logs and reports are
+seconds since the first frame. Setup (MediaMTX, DJI Mimo, WSL2 networking, USB), latency
+and troubleshooting are in **[docs/live-camera.md](docs/live-camera.md)**.
+
 ### Tools
 
 ```bash
-python bench_latency.py IMG_0450.MOV --provider local --sizes 448 640 --concurrency 1 4 8
-python locate_test.py IMG_0450.MOV --url http://<srv>:8020 --mode fast
+python run.py camera-check rtsp://<host>:8554/live/x2 --clock   # camera link check, no models
+python run.py bench IMG_0450.MOV --provider local --sizes 448 640 --concurrency 1 4 8
+python run.py locate-test IMG_0450.MOV --url http://<srv>:8020 --mode fast
 python tests/test_core.py
 bash server/run_realtime_test.sh IMG_0450.MOV   # on the server: benchmark + live run + verdict
 bash server/watch_live.sh IMG_0450.MOV          # on the server: live_infer → browser
@@ -628,7 +714,7 @@ Request body (JSON):
 | `use_yoloe` | bool | `true` | per-frame detector |
 | `use_locate` | bool | `true` | LocateAnything |
 | `use_qwen` | bool | `true` | Qwen checks |
-| `options` | object | `{}` | `hold`, `la_interval`, `name_every`, `recheck`, `confirm_timeout` (seconds; see `exit_monitor.py --help`) |
+| `options` | object | `{}` | `hold`, `la_interval`, `name_every`, `recheck`, `confirm_timeout` (seconds; see `python run.py exits --help`) |
 
 ```json
 {"source": "IMG_0452.MOV", "loop": false}
@@ -1034,7 +1120,7 @@ Silicon client over the LAN). Treat as indicative.
 | Qwen3-VL-8B via OpenRouter | 2.3–4 s, occasional 10 s+ outliers |
 | LocateAnything-3B, `hybrid`, 960 px | 1.5–1.9 s model time, 2–2.5 s round trip |
 | YOLOE-11s on the Mac (MPS) | 45–75 ms per frame |
-| `exit_monitor.py` fast loop on the Mac | ~75 ms per frame (~13 fps) |
+| `apps/exit_monitor.py` fast loop on the Mac | ~75 ms per frame (~13 fps) |
 
 YOLOE on the 4090 (`server/run_monitor.sh`) is expected to be several times faster but
 has not been benchmarked yet.
@@ -1054,6 +1140,7 @@ has not been benchmarked yet.
 | Web app: video doesn't play | Browser can't decode the file (often HEVC outside macOS) → `ffmpeg -i in.MOV -c:v libx264 -pix_fmt yuv420p out.mp4` |
 | Web app: "Qwen down — skipped" | Live mode carries on without that model; start it (`bash server/start_all.sh`) and press Start detection again. |
 | Browser view not reachable | `ssh -L 8090:localhost:8090 <user>@<server>` → `http://localhost:8090`. |
+| `No frames from rtsp://… after 30 s`, frequent `stream lost — reconnecting` | Live camera problems (MediaMTX, Wi-Fi, firewall, WSL2) → [docs/live-camera.md](docs/live-camera.md#7-troubleshooting). |
 | LocateAnything setup fails at the PyTorch step | `TORCH_INDEX=https://download.pytorch.org/whl/cu121 bash server/setup_locate.sh` |
 
 ---
@@ -1081,7 +1168,7 @@ has not been benchmarked yet.
   LocateAnything uses the sampling settings from its model card (temperature 0.7), so
   its boxes can vary slightly between runs.
 - Live runs pace the video to wall-clock time and drop frames when processing is slow,
-  so frame-level results depend on hardware speed; `video_infer.py` (offline) does not
+  so frame-level results depend on hardware speed; `apps/video_infer.py` (offline) does not
   drop frames.
 
 ## Licences

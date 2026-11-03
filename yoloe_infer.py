@@ -20,7 +20,8 @@ Per frame:
      in front of it. An obstacle obstructs the exit if it stands on the floor
      inside the zone (bottom edge in zone) and overlaps it enough.
   5. Status from the share of door width the obstacles cover:
-        ≥ OBSTRUCTED_COVERAGE → obstructed, > 0 → partially_obstructed, else clear
+        ≥ OBSTRUCTED_COVERAGE (60 %) → obstructed, ≥ PARTIAL_COVERAGE (30 %) →
+        partially_obstructed, else clear
      smoothed per tracked exit over the last few frames.
 
 Input is treated as a live stream (same pacing as live_infer.py).

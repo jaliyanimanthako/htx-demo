@@ -30,7 +30,7 @@ from pathlib import Path
 
 
 from core.labels import DOOR_LABELS, OBSTACLE_LABELS, SIGN_LABELS, kind_of, norm_box_to_pixels
-from core.qwen_assist import QwenAssist
+from core.qwen_assist import QwenAssist, qwen_endpoint
 from core.rules import assess, box_iou, containment, merge_double_doors
 from engines.locate_engine import LocateEngine
 from live_infer import run_buffered, run_live
@@ -166,7 +166,7 @@ def main():
     stem = Path(args.source).stem if Path(args.source).is_file() else "live"
     assist = None
     if args.qwen_url:
-        assist = QwenAssist(args.qwen_url, args.qwen_model, name_every=args.name_every,
+        assist = QwenAssist(qwen_endpoint(args.qwen_url, args.qwen_model), name_every=args.name_every,
                             verify=not args.no_verify,
                             verify_blocking=not args.verify_background,
                             base_categories=categories)

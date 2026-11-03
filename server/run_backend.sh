@@ -27,6 +27,8 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 QWEN_PORT="$(cat "$HOME/qwen-vllm/port" 2>/dev/null || echo 8010)"
 LOCATE_PORT="$(cat "$HOME/locate-anything/port" 2>/dev/null || echo 8020)"
+# QWEN_URL from the shell or .env: an address, "openrouter" or a name (python qwen_server.py)
+QWEN_URL="$(python -c 'import os; from core.config import qwen_url; print(qwen_url(os.environ.get("QWEN_URL")) or "")')"
 export QWEN_URL="${QWEN_URL:-http://localhost:$QWEN_PORT/v1}"
 export LOCATE_URL="${LOCATE_URL:-http://localhost:$LOCATE_PORT}"
 

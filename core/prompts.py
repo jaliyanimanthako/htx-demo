@@ -156,10 +156,14 @@ DEPTH_PROMPT = ("Look at the {label} in the middle of this image. What is direct
                 "the floor, count as floor. Answer with one word: floor or raised.")
 
 
-VERDICT_PROMPT = ("Look at the door in the middle of this image. Is anything on the floor in "
-                  "front of it, in the doorway or against it that blocks or narrows the way "
-                  "through? Ignore things on desks or far in front. Answer with one letter: "
-                  "C = clear, P = partially blocked (a person can still pass), B = blocked.")
+# matches core/rules.py: < 30 % of the doorway width covered = clear, 30-60 % = partial
+VERDICT_PROMPT = ("Look at the door in the middle of this image. How much of the doorway width "
+                  "is blocked by things on the floor in front of it, in the doorway or against "
+                  "it? Ignore things on desks or far in front. Answer with one letter: "
+                  "C = clear (nothing in the way, or only something small at the side that "
+                  "leaves most of the doorway free), P = partially blocked (about a third to a "
+                  "half of the width is blocked; a person can still pass), B = blocked (more "
+                  "than half is blocked).")
 
 
 # ── Fire-extinguisher mode (extinguisher_monitor.py; parsed by core/expiry.py) ──

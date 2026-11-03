@@ -2,12 +2,17 @@
 Video input and camera motion.
 
   LiveSource          file / webcam / RTSP; files are paced to real time and frames
-                      are dropped when processing falls behind (behaves like a camera)
+                      are dropped when processing falls behind (behaves like a camera),
+                      or read frame by frame with realtime=False (offline mode)
+  VideoSaver          writes the output video; re-encoded to H.264 when ffmpeg exists
+  Progress            "frame i/N, ETA" lines for offline runs
   MotionCompensator   frame-to-frame camera motion (optical flow + similarity
                       transform), accumulated so boxes from an older frame can be
                       mapped onto the current one
 """
 
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -88,14 +93,17 @@ class LiveSource:
     the consumer is too slow for are dropped, so a file behaves like a camera.
     """
 
-    def __init__(self, source: str, loop: bool = False):
+    def __init__(self, source: str, loop: bool = False, realtime: bool = True):
+        """realtime=False (files only): every frame, as fast as the consumer reads."""
         self.is_file = Path(source).is_file()
+        self.realtime = realtime
         self.loop    = loop and self.is_file
         self.cap     = cv2.VideoCapture(int(source) if source.isdigit() else source)
         if not self.cap.isOpened():
             raise RuntimeError(f"Could not open source: {source}")
         self.fps     = self.cap.get(cv2.CAP_PROP_FPS) or 25.0
         self.width   = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT)) if self.is_file else 0
         self.height  = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.idx     = -1       # stream index of the last frame returned (monotonic)
         self.offset  = 0        # stream index where the current pass over the file began
@@ -130,6 +138,10 @@ class LiveSource:
             self.idx += 1
             return self.idx, frame, 0
 
+        if not self.realtime:                       # offline: every frame, no clock
+            ok, frame = self._advance(decode=True)
+            return (self.idx, frame, 0) if ok else (None, None, 0)
+
         if self._t0 is None:
             self._t0 = time.time()
         target = int((time.time() - self._t0) * self.fps)
@@ -153,6 +165,64 @@ class LiveSource:
 
     def release(self):
         self.cap.release()
+
+
+class VideoSaver:
+    """
+    Writes frames to an .mp4 (size taken from the first frame). OpenCV's mp4v file
+    plays in VLC but not in QuickTime or browsers, so on close() it is re-encoded to
+    H.264 when ffmpeg is installed.
+    """
+
+    def __init__(self, path, fps: float):
+        self.path, self.fps = Path(path), fps
+        self.writer, self.frames = None, 0
+        self._tmp = self.path.with_name(self.path.stem + ".mp4v.mp4")
+
+    def write(self, frame, copies: int = 1) -> None:
+        if self.writer is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            h, w = frame.shape[:2]
+            self.writer = cv2.VideoWriter(str(self._tmp), cv2.VideoWriter_fourcc(*"mp4v"),
+                                          self.fps, (w, h))
+        for _ in range(copies):
+            self.writer.write(frame)
+            self.frames += 1
+
+    def close(self):
+        """→ the saved file, or None if nothing was written."""
+        if self.writer is None:
+            return None
+        self.writer.release()
+        ffmpeg = shutil.which("ffmpeg")
+        ok = ffmpeg and subprocess.run(
+            [ffmpeg, "-loglevel", "error", "-y", "-i", str(self._tmp), "-c:v", "libx264",
+             "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+             "-movflags", "+faststart", str(self.path)]).returncode == 0
+        if ok:
+            self._tmp.unlink()
+        else:
+            self._tmp.replace(self.path)
+        return self.path
+
+
+class Progress:
+    """Offline runs: a "frame i/N (p%) … ETA" line every few seconds."""
+
+    def __init__(self, total: int, every_s: float = 5.0):
+        self.total, self.every = total, every_s
+        self.t0 = self.last = time.time()
+
+    def update(self, idx: int, vt: float) -> None:
+        now = time.time()
+        if now - self.last < self.every:
+            return
+        self.last = now
+        done = idx + 1
+        eta = (now - self.t0) / done * max(0, self.total - done) if self.total else 0
+        pct = f" ({100 * done / self.total:.0f}%)" if self.total else ""
+        print(f"  offline: frame {done}/{self.total or '?'}{pct}  video {vt:5.1f}s  "
+              f"elapsed {now - self.t0:4.0f}s  ETA {eta:4.0f}s", flush=True)
 
 
 def warp_boxes(detections: list, M: np.ndarray, motion_scale: float,

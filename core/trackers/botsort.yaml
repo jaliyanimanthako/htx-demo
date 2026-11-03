@@ -1,0 +1,15 @@
+# BoT-SORT for exit_monitor.py --tracker botsort: ByteTrack + camera-motion compensation
+# (sparse optical flow), which suits a handheld, walking camera. Thresholds as in
+# bytetrack.yaml (lowered to YOLOE's scores); no appearance ReID (extra model, slower).
+tracker_type: botsort
+track_high_thresh: 0.15
+track_low_thresh: 0.05
+new_track_thresh: 0.08
+track_buffer: 30
+match_thresh: 0.8
+fuse_score: False         # match on overlap only: YOLOE scores (0.1-0.3) x IoU never reach match_thresh
+gmc_method: sparseOptFlow
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: False
+model: auto

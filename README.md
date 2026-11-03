@@ -248,7 +248,7 @@ LOCATE_URL=http://<server-ip>:8020        # LocateAnything
 QWEN_URL=http://<server-ip>:8010/v1       # Qwen vLLM (port printed by serve_qwen.sh)
 LOCAL_VLM_URL=http://<server-ip>:8010/v1  # same server, for --provider local
 LOCAL_VLM_MODEL=Qwen/Qwen3-VL-4B-Instruct
-OPENROUTER_API_KEY=...                    # only for the hosted-API option
+OPENROUTER_API_KEY=...                    # for QWEN_URL=openrouter and --provider openrouter
 ```
 
 Check that both servers answer before running:
@@ -260,6 +260,98 @@ curl http://<server-ip>:8020/health
 
 If the ports are not reachable from the client, tunnel them:
 `ssh -L 8010:localhost:8010 -L 8020:localhost:8020 <user>@<server>` and use `localhost`.
+
+#### Choosing the Qwen server (`qwen_server.py`)
+
+Name each Qwen server once in `.env`, then switch with one command. The addresses stay
+in `.env`; the command only writes `QWEN_URL=<name>`:
+
+```bash
+QWEN_URL_GPU=http://<gpu-server-ip>:8010/v1   # the 4090 server
+QWEN_URL_MAC=http://localhost:8000/v1         # e.g. a Mac running an MLX build of Qwen
+# "openrouter" is built in (needs OPENROUTER_API_KEY)
+```
+
+```bash
+.venv/bin/python qwen_server.py              # list: which one is in use, up or down
+.venv/bin/python qwen_server.py mac          # use the Mac from now on
+.venv/bin/python qwen_server.py gpu          # back to the GPU server
+.venv/bin/python qwen_server.py openrouter   # hosted API (LocateAnything is then off)
+.venv/bin/python qwen_server.py default      # remove the choice
+```
+
+All Qwen users follow it: `exit_monitor.py`, `extinguisher_monitor.py`, `locate_live.py`,
+the backend and `server/run_*.sh`. The CLIs pick it up on the next run; **restart the
+backend** to switch it. For one run only: `--qwen-url mac`. A `QWEN_URL` exported in the
+shell wins over `.env`. For the backend, run the command on the machine the backend runs
+on, and make sure that machine can reach the chosen server.
+
+#### Qwen through OpenRouter instead of the GPU server
+
+Every Qwen user can use the hosted OpenRouter API instead of your own vLLM server:
+`exit_monitor.py`, `extinguisher_monitor.py`, `locate_live.py` and the backend. Set this
+in `.env` (on the server for the backend, or on your computer for the CLIs):
+
+```bash
+QWEN_URL=openrouter                       # instead of http://<server-ip>:8010/v1
+OPENROUTER_API_KEY=sk-or-...              # your key (https://openrouter.ai/keys)
+QWEN_MODEL=qwen/qwen3-vl-8b-instruct      # optional; this is the default
+```
+
+For one CLI run only, use `--qwen-url openrouter`. Then restart the backend; its
+startup line shows `Qwen https://openrouter.ai/api/v1 (openrouter)`, and `/api/info`
+shows `"provider": "openrouter"`.
+
+**What changes:**
+
+| | Your GPU server | OpenRouter |
+|---|---|---|
+| GPU model servers needed | yes: Qwen (vLLM) + LocateAnything on the 4090 | **none**: only YOLOE runs on the backend machine (a GPU helps but isn't required) |
+| Exit mode pipeline | YOLOE + LocateAnything + Qwen | **YOLOE + Qwen**: LocateAnything is switched off automatically |
+| Model | Qwen3-VL-4B (`serve_qwen.sh`) | Qwen3-VL-8B by default (any OpenRouter vision model via `QWEN_MODEL`) |
+| Time per extinguisher read | ~1.5 s | **~2.5–3.5 s** over the internet |
+| Cost | the electricity | pay per call: fractions of a cent per read |
+| Privacy | images stay on your network | **crops of your video are sent to OpenRouter** and its model host |
+
+Both read the `IMG_0454` sticker correctly (VALID, next service 06/2027, confirmed). With
+OpenRouter's slower reads, a quick walk past may finish before two reads agree, so
+stay at the tag a little longer, or process recorded videos **offline** (below). In exit
+mode, Qwen's checks only refine the status, so the extra latency matters less.
+
+#### Offline mode: process a video completely and save the result
+
+For recorded videos, especially with OpenRouter, `--offline` processes **every frame** and
+**waits for every model call**, instead of running in real time. A slow API then costs
+processing time, not missed reads.
+
+- All timings (hold, re-read, LocateAnything interval) follow the **video's clock**, so
+  the result doesn't depend on network speed.
+- The output is a video at the original frame rate, re-encoded to H.264 when `ffmpeg`
+  is installed, so it plays in QuickTime and browsers.
+
+```bash
+.venv/bin/python extinguisher_monitor.py IMG_0454.MOV --qwen-url openrouter --offline --no-display
+.venv/bin/python exit_monitor.py         IMG_0452.MOV --qwen-url openrouter --offline --no-display
+#  → results/extinguisher_IMG_0454/IMG_0454_annotated.mp4   (+ report.json, snapshots)
+#  → results/exit_monitor_IMG_0452/IMG_0452_annotated.mp4
+```
+
+| Option | |
+|---|---|
+| `--offline` | every frame, waits for the models, saves the video (video files only) |
+| `--save out.mp4` | a different output file (also works in real-time mode) |
+| `--save-view annotated` | save only the annotated frame (default `combined`: original \| annotated + status panel) |
+| `--quiet` | no per-frame log; a progress line with an ETA still appears every 5 s |
+
+Measured with OpenRouter on the Mac:
+
+| Video | Time | Result |
+|---|---|---|
+| `IMG_0454` (11.7 s) | 54 s | VALID, next service 06/2027, confirmed |
+| `IMG_0452` (16 s) | 1 min 51 s | EXIT PARTIAL (office chair) |
+
+Offline mode works with your own GPU server too (just faster); it's not for cameras or
+streams.
 
 ---
 
@@ -283,7 +375,8 @@ long, blockers) plus the latest events. Keys: `q`/`Esc` quit, `space` pause.
 | `--no-yoloe` | off | no per-frame detector; tracks come from LocateAnything only |
 | `--la-interval` | 1.0 s | minimum gap between LocateAnything calls |
 | `--name-every` | 3.0 s | how often Qwen names objects at the door |
-| `--hold` | 1.5 s | a new status must hold this long before it is shown |
+| `--hold` | 1.5 s | the status is a vote over this window (the per-frame result flickers); a change needs 60 % of it |
+| `--tracker` | `ours` | `bytetrack` / `botsort`: Ultralytics' tracker matches YOLOE's detections instead of our IoU tracker (exit logic stays ours). Tested on IMG_0451/0452/0454: slightly fewer IDs per door, but more box jumps and ~5–15 % slower — no clear win, so `ours` stays the default |
 | `--recheck` | 8.0 s | re-ask Qwen for a verdict at least this often per exit |
 | `--verdict-ttl` | 6.0 s | how long a Qwen verdict counts |
 | `--confirm-timeout` | 6.0 s | show a door's status without Qwen's exit confirmation after this |
@@ -586,7 +679,7 @@ first one stops.
 {
   "models": {
     "locate_anything": {"url_set": true, "up": true},
-    "qwen":            {"url_set": true, "up": true}
+    "qwen":            {"url_set": true, "provider": "self-hosted", "up": true}
   },
   "modes": [
     {"id": "exits",        "title": "Exit obstruction"},
@@ -599,6 +692,7 @@ first one stops.
 }
 ```
 
+- `models.qwen.provider`: `"self-hosted"` (your vLLM server) or `"openrouter"`.
 - `models.*.up`: whether that model server answers right now. Live mode skips a model
   that is down rather than failing.
   - Exit mode needs YOLOE, which always runs in the backend; LocateAnything and Qwen
@@ -1005,7 +1099,8 @@ obstructs the door if
   only the visible part of a door partly hidden by boxes).
 
 Status from how much of the door width the obstructions cover:
-≥ 60 % → **obstructed**, any → **partially obstructed**, none → **clear**.
+≥ 60 % → **obstructed**, 30–60 % → **partially obstructed**, under 30 % → **clear** (e.g. a
+chair beside the door frame leaves the doorway free).
 Qwen's verdict (C/P/B on a close-up of the door), when recent, is combined with the
 rule — the more severe one wins.
 
@@ -1067,7 +1162,7 @@ has not been benchmarked yet.
   as obstructions.
 - **Double doors** are sometimes tracked as one leaf.
 - **Handheld motion.** Fast pans can briefly mis-place boxes until the next detection.
-- **Status lag.** A change is shown ~1.5 s (hold) after it is detected; LocateAnything
+- **Status lag.** A change is shown ~1–1.5 s after it is detected (the `--hold` vote); LocateAnything
   results are 1.5–2.5 s old when they arrive (boxes are motion-compensated).
 
 ## Reproducibility

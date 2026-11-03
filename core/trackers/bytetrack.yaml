@@ -1,0 +1,11 @@
+# ByteTrack for exit_monitor.py --tracker bytetrack (Ultralytics' bytetrack.yaml, thresholds
+# lowered to YOLOE's open-vocabulary scores: doors ~0.15, obstacles ~0.08 — the defaults
+# (0.25) would never start a track for most doors). New IDs still need the per-class
+# threshold in FastDetector; the low pass only keeps existing tracks alive.
+tracker_type: bytetrack
+track_high_thresh: 0.15   # first-stage matching
+track_low_thresh: 0.05    # second stage: low-score boxes keep existing tracks alive
+new_track_thresh: 0.08    # lowest per-class threshold (obstacles); FastDetector gates per class
+track_buffer: 30          # frames a lost track is kept (1 s at 30 fps)
+match_thresh: 0.8
+fuse_score: False         # match on overlap only: YOLOE scores (0.1-0.3) x IoU never reach match_thresh

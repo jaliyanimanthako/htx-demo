@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from datetime import date                                             # noqa: E402
 
 from core import expiry                                               # noqa: E402
+from core.config import OPENROUTER_URL, qwen_url                      # noqa: E402
 from core.labels import kind_of                                      # noqa: E402
 from core.parsing import parse_response                               # noqa: E402
 from core.rules import assess, covers_door_base, merge_double_doors  # noqa: E402
@@ -65,6 +66,19 @@ def test_rule_occlusion_counts_hidden_base():
     assert len(blocking) == 1 and exits[0]["status"] != "clear"
 
 
+def test_rule_coverage_thresholds():
+    door = {"x1": 600, "y1": 100, "x2": 1000, "y2": 900}             # 400 px wide
+
+    def status(x1, x2):
+        exits = [{"type": "exit", "label": "door", "bounding_box": dict(door)}]
+        ob = {"type": "obstruction", "label": "chair", "bounding_box": {"x1": x1, "y1": 600, "x2": x2, "y2": 905}}
+        assess(exits, [ob], W, H)
+        return exits[0]["status"]
+    assert status(560, 680) == "clear"                    # 20 % of the width, at the edge
+    assert status(600, 780) == "partially_obstructed"     # 45 %
+    assert status(600, 860) == "obstructed"               # 65 %
+
+
 def test_rule_ignores_far_objects():
     exits = [{"type": "exit", "label": "door", "bounding_box": {"x1": 600, "y1": 100, "x2": 1000, "y2": 900}}]
     far = {"type": "obstruction", "label": "chair", "bounding_box": {"x1": 50, "y1": 500, "x2": 200, "y2": 1000}}
@@ -92,6 +106,17 @@ def test_label_kinds():
     assert kind_of("exit sign", *labels) == "sign"
     assert kind_of("office chair", *labels) == "obstacle"
 
+
+
+def test_rule_obstacle_shared_by_two_exits():
+    door = {"x1": 600, "y1": 200, "x2": 1000, "y2": 900}
+    exits = [{"type": "exit", "label": "#1", "bounding_box": dict(door)},
+             {"type": "exit", "label": "#2", "bounding_box": {**door, "x1": 620}}]   # 2 tracks, 1 door
+    box = {"type": "obstruction", "label": "box",
+           "bounding_box": {"x1": 650, "y1": 600, "x2": 950, "y2": 905}}
+    blocking = assess(exits, [box], W, H)
+    assert sorted(b["blocks_exit"] for b in blocking) == ["#1", "#2"]
+    assert exits[0]["status"] == exits[1]["status"] != "clear"
 
 
 def test_expiry_date_formats():
@@ -125,6 +150,23 @@ def test_expiry_answer_and_status():
     assert expiry.assess(a["dates"], today)["status"] == "unclear"
     assert expiry.parse_answer("NONE too_small") == {"dates": [], "none": "too_small"}
     assert expiry.parse_answer("I cannot see it")["none"] == "unreadable"
+
+
+
+def test_qwen_server_names():
+    import os
+    os.environ["QWEN_URL_TESTBOX"] = "http://testbox:8000/v1"
+    try:
+        assert qwen_url("testbox") == qwen_url("TestBox") == "http://testbox:8000/v1"
+        assert qwen_url("openrouter") == OPENROUTER_URL
+        assert qwen_url("http://x:1/v1") == "http://x:1/v1" and qwen_url(None) is None
+        try:
+            qwen_url("nosuchbox")
+            assert False, "unknown name accepted"
+        except SystemExit as e:
+            assert "QWEN_URL_NOSUCHBOX" in str(e)
+    finally:
+        del os.environ["QWEN_URL_TESTBOX"]
 
 
 if __name__ == "__main__":

@@ -13,12 +13,18 @@ Fire-extinguisher monitor — find extinguishers and read their expiry / service
 
 Too-small extinguishers are not sent to Qwen (the hint says "move closer").
 
+OFFLINE (--offline, video files): every frame is processed and each Qwen read is
+waited for, so a slow API (e.g. OpenRouter) costs processing time instead of missed
+reads; all timings follow the video's clock. The result is saved as a video
+(results/extinguisher_<video>/<video>_annotated.mp4, or --save).
+
 Usage:
   python extinguisher_monitor.py IMG_0454.MOV                 # QWEN_URL from .env
   python extinguisher_monitor.py IMG_0454.MOV --qwen-url http://<server-ip>:8010/v1
   python extinguisher_monitor.py tag_photo.jpg                # one photo (or a folder)
   python extinguisher_monitor.py IMG_0454.MOV --no-qwen       # detection only
   python extinguisher_monitor.py IMG_0454.MOV --today 2026-12-01 --monthfirst
+  python extinguisher_monitor.py IMG_0454.MOV --qwen-url openrouter --offline --no-display
   q / Esc quits, space pauses.
 """
 
@@ -42,10 +48,10 @@ import core.config  # noqa: F401  (loads .env)
 from core.drawing import text_scale
 from core.expiry import SAFETY, STATUS_TEXT, assess, fmt_date, parse_answer, reclassify, status_for
 from core.prompts import EXTINGUISHER_LOCATE_PROMPT, EXTINGUISHER_PROMPT, EXTINGUISHER_SYSTEM
-from core.qwen_assist import first_served_model
+from core.qwen_assist import qwen_endpoint
 from core.rules import box_iou, containment
 from core.stream_view import MJPEGStreamer
-from core.video_io import LiveSource, MotionCompensator
+from core.video_io import LiveSource, MotionCompensator, Progress, VideoSaver
 from engines.qwen_engine import QwenEngine
 from exit_monitor import Tracker   # shared IoU tracker with camera-motion compensation
 
@@ -188,13 +194,13 @@ class TagReader:
 
     def __init__(self, url: str, model: str = None, max_side: int = 1280):
         try:
-            model = model or first_served_model(url)
+            endpoint = qwen_endpoint(url, model)              # self-hosted vLLM or OpenRouter
         except OSError as e:
             raise SystemExit(f"\n  Cannot reach Qwen at {url} ({getattr(e, 'reason', e)}).\n"
                              "  Check the port on the server: cat ~/qwen-vllm/port  "
                              "(or bash server/status.sh)") from None
-        self.locator = QwenEngine("EMPTY", model, url, max_image_side=max_side, max_tokens=60)
-        self.engine = QwenEngine("EMPTY", model, url, max_image_side=max_side, max_tokens=160)
+        self.locator = QwenEngine(**endpoint, max_image_side=max_side, max_tokens=60)
+        self.engine = QwenEngine(**endpoint, max_image_side=max_side, max_tokens=160)
 
     def locate(self, crop_bgr) -> list:
         """→ sticker boxes in crop pixels (largest first)."""
@@ -206,7 +212,12 @@ class TagReader:
             x1, y1, x2, y2 = (min(1000, int(v)) for v in m)
             if x2 > x1 and y2 > y1:
                 boxes.append([x1 * w / 1000, y1 * h / 1000, x2 * w / 1000, y2 * h / 1000])
-        return sorted(boxes, key=lambda b: -(b[2] - b[0]) * (b[3] - b[1]))
+        boxes = sorted(boxes, key=lambda b: -(b[2] - b[0]) * (b[3] - b[1]))
+        kept = []                        # the model often lists one sticker twice
+        for b in boxes:
+            if all(box_iou(b, k) < 0.5 and containment(b, k) < 0.7 for k in kept):
+                kept.append(b)
+        return kept
 
     def read(self, crop_bgr, dayfirst: bool) -> tuple:
         """→ (raw answer, parsed {"dates", "none"}, seconds, [sticker crops sent])"""
@@ -266,6 +277,7 @@ class ExtinguisherMonitor:
             self.reader = TagReader(args.qwen_url, args.qwen_model, args.read_side)
         self.pool = ThreadPoolExecutor(max_workers=2)
         self.q_out = queue.Queue()
+        self._futures: list = []         # reads in flight (offline mode waits for them)
         self.events: list = []
         self.snap_dir = Path(args.out_dir)
         self._log = []
@@ -296,7 +308,7 @@ class ExtinguisherMonitor:
         full, k = frame, W0 / W
         if (W, H) != (W0, H0):
             frame = cv2.resize(frame, (W, H), interpolation=cv2.INTER_AREA)
-        now = time.time()
+        now = vt if self.args.offline else time.time()     # offline: the video's clock
 
         if self.motion is None:
             self.motion = MotionCompensator(W)
@@ -317,6 +329,11 @@ class ExtinguisherMonitor:
 
         self._apply_reads(now, vt, frame)
         self._update(full, k, frame, now, vt)
+        if self.args.offline:             # wait for this frame's reads: they land at this time
+            for f in self._futures:
+                f.result()
+            self._futures = []
+            self._apply_reads(now, vt, frame)
         return frame, info, now
 
     def _update(self, full, k, frame, now, vt):
@@ -424,7 +441,8 @@ class ExtinguisherMonitor:
                 self.q_out.put((rec.id, n, raw, parsed, secs, q, crop_vt, path))
             except Exception as e:
                 self.q_out.put((rec.id, n, f"error: {e}", None, 0.0, q, crop_vt, path))
-        self.pool.submit(job)
+        self._futures = [f for f in self._futures if not f.done()]
+        self._futures.append(self.pool.submit(job))
 
     def _apply_reads(self, now, vt, frame):
         a = self.args
@@ -585,11 +603,13 @@ class ExtinguisherMonitor:
             _label(out, text, x1, y1, col, s, th)
         return out
 
-    def panel(self, width: int, vt: float, fps: float) -> np.ndarray:
+    def panel(self, width: int, vt: float, fps) -> np.ndarray:
+        """fps=None: offline (processing speed means nothing in the saved video)."""
         p = np.full((200, width, 3), 30, np.uint8)
         f = cv2.FONT_HERSHEY_SIMPLEX
         mode = "YOLOE" + (" + Qwen" if self.reader else " (no Qwen)")
-        cv2.putText(p, f"EXTINGUISHERS   t={vt:5.1f}s   {fps:4.1f} fps   [{mode}]   today {self.today}",
+        speed = "offline" if fps is None else f"{fps:4.1f} fps"
+        cv2.putText(p, f"EXTINGUISHERS   t={vt:5.1f}s   {speed}   [{mode}]   today {self.today}",
                     (12, 26), f, 0.7, (230, 230, 230), 2, cv2.LINE_AA)
         y = 56
         for r in sorted(self.recs.values(), key=lambda r: (not r.visible, r.id))[:5]:
@@ -608,15 +628,21 @@ class ExtinguisherMonitor:
     # ── video / camera ───────────────────────────────────────────────────────
     def run(self):
         a = self.args
-        src = LiveSource(a.source, loop=a.loop)
+        if a.offline and not Path(a.source).is_file():
+            raise SystemExit("  --offline needs a video file (not a camera or stream)")
+        src = LiveSource(a.source, loop=a.loop and not a.offline, realtime=not a.offline)
         stem = Path(a.source).stem if Path(a.source).is_file() else "live"
         out_dir = Path(a.out_dir) / f"extinguisher_{stem}"
         out_dir.mkdir(parents=True, exist_ok=True)
         self.snap_dir = out_dir
+        save = a.save or (str(out_dir / f"{stem}_annotated.mp4") if a.offline else None)
+        saver = VideoSaver(save, src.fps) if save else None
+        progress = Progress(src.frame_count) if a.offline else None
         print(f"  Source: {a.source} | {src.width}x{src.height} @ {src.fps:.1f} fps | "
-              f"today {self.today} | output → {out_dir}\n")
+              f"today {self.today} | {'OFFLINE (every frame, waits for Qwen)' if a.offline else 'real time'}"
+              f" | output → {out_dir}\n")
         streamer = MJPEGStreamer(a.stream).start() if a.stream else None
-        writer, win, times = None, "Extinguisher monitor (q: quit, space: pause)", []
+        win, times = "Extinguisher monitor (q: quit, space: pause)", []
         try:
             while True:
                 idx, frame, skipped = src.read()
@@ -627,7 +653,9 @@ class ExtinguisherMonitor:
                 frame, info, now = self.step(frame, vt)
                 annotated = self.draw(frame)
                 times.append(time.time() - t0)
-                fps = 1.0 / max(1e-3, np.mean(times[-30:]))
+                fps = None if a.offline else 1.0 / max(1e-3, np.mean(times[-30:]))
+                if progress:
+                    progress.update(idx, vt)
                 if a.log_frames:
                     log, self._log = self._log, []
                     vis = [r for r in self.recs.values() if r.visible]
@@ -640,13 +668,8 @@ class ExtinguisherMonitor:
                 top = cv2.resize(cv2.hconcat([frame, annotated]), (2 * half, int(H * half / W) // 2 * 2),
                                  interpolation=cv2.INTER_AREA)
                 combined = cv2.vconcat([top, self.panel(2 * half, vt, fps)])
-                if a.save and writer is None:
-                    Path(a.save).parent.mkdir(parents=True, exist_ok=True)
-                    writer = cv2.VideoWriter(a.save, cv2.VideoWriter_fourcc(*"mp4v"), src.fps,
-                                             (combined.shape[1], combined.shape[0]))
-                if writer:
-                    for _ in range(skipped + 1):
-                        writer.write(combined)
+                if saver:
+                    saver.write(combined if a.save_view == "combined" else annotated, skipped + 1)
                 if streamer:
                     streamer.publish(combined)
                     streamer.publish(frame, "original")
@@ -662,8 +685,6 @@ class ExtinguisherMonitor:
                         src.pause_clock(time.time() - tp)
         finally:
             src.release()
-            if writer:
-                writer.release()
             if streamer:
                 streamer.stop()
             if not a.no_display:
@@ -671,6 +692,10 @@ class ExtinguisherMonitor:
             self._finish_reads(out_dir)
             self._report(out_dir, {"frames": src.idx + 1, "dropped": src.dropped,
                                    "fast_loop_ms": round(1000 * float(np.mean(times)), 1) if times else None})
+            if saver:
+                path = saver.close()
+                if path:
+                    print(f"  Video : {path}  ({saver.frames} frames @ {src.fps:.1f} fps)")
 
     def _finish_reads(self, out_dir):
         """Wait for reads still in flight (a few seconds at most) so the report has them."""
@@ -768,7 +793,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Fire-extinguisher detection + expiry-date reading")
     ap.add_argument("source", help="Video file, webcam index, stream URL, photo or folder of photos")
     ap.add_argument("--qwen-url", default=os.environ.get("QWEN_URL"),
-                    help="Qwen vLLM server, e.g. http://host:8010/v1 (default: $QWEN_URL)")
+                    help="Qwen server: an address (http://host:8010/v1), 'openrouter', or a name "
+                         "from .env such as 'gpu' / 'mac' (default: $QWEN_URL; see qwen_server.py)")
     ap.add_argument("--qwen-model", default=None)
     ap.add_argument("--no-qwen", action="store_true", help="Detection only (no date reading)")
     ap.add_argument("--yoloe-model", default="yoloe-11s-seg.pt")
@@ -805,6 +831,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="No per-frame log line (events only)")
     ap.add_argument("--stream", type=int, nargs="?", const=8090, default=None, metavar="PORT")
     ap.add_argument("--save", default=None, help="Record the output view to this .mp4")
+    ap.add_argument("--offline", action="store_true",
+                    help="Video files: process every frame and wait for each Qwen read (no "
+                         "real-time pacing, nothing missed with a slow API such as OpenRouter); "
+                         "saves the result video (default: results/extinguisher_<video>/"
+                         "<video>_annotated.mp4)")
+    ap.add_argument("--save-view", choices=["combined", "annotated"], default="combined",
+                    help="What the saved video shows: original | annotated + status panel "
+                         "(combined, default) or the annotated frame only")
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--out-dir", default="results")

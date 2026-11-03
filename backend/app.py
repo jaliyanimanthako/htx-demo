@@ -111,8 +111,9 @@ def health():
 @app.get("/api/info", dependencies=[Depends(require_token)])
 def info():
     return {"models": {"locate_anything": {"url_set": bool(settings.LOCATE_URL),
-                                           "up": _up(settings.LOCATE_URL + "/health")},
-                       "qwen": {"url_set": bool(settings.QWEN_URL),
+                                           "up": bool(settings.LOCATE_URL)
+                                           and _up(settings.LOCATE_URL + "/health")},
+                       "qwen": {"url_set": bool(settings.QWEN_URL), "provider": settings.QWEN_PROVIDER,
                                 "up": _up(settings.QWEN_URL + "/models")}},
             "modes": [{"id": k, "title": v["title"]} for k, v in LIVE_MODES.items()],
             "videos": list_videos(), "max_sessions": settings.MAX_SESSIONS,

@@ -4,6 +4,7 @@ categories) in the background, and runs the floor-vs-furniture check.
 """
 
 import json
+import os
 import re
 import threading
 import time
@@ -13,6 +14,7 @@ import cv2
 import numpy as np
 
 from core import depth_check
+from core.config import PROVIDERS, is_openrouter, qwen_url
 from core.prompts import NAME_PROMPT
 from engines.qwen_engine import QwenEngine
 
@@ -26,13 +28,13 @@ class QwenAssist:
         verdict is cached by position, so later frames drop desk items instantly
     """
 
-    def __init__(self, url: str, model: str = None, name_every: float = 2.5,
+    def __init__(self, endpoint: dict, name_every: float = 2.5,
                  name_ttl: float = 10.0, max_names: int = 6, verify: bool = True,
                  verify_blocking: bool = True, base_categories: list = ()):
-        model = model or first_served_model(url)
+        """endpoint: from qwen_endpoint() (self-hosted vLLM or OpenRouter)."""
         self.base = list(base_categories)
         self.last_names = None       # Qwen's latest answer (shown on each frame line)
-        self.engine = QwenEngine("EMPTY", model, url, max_image_side=640, max_tokens=60)
+        self.engine = QwenEngine(**endpoint, max_image_side=640, max_tokens=60)
         self.name_every, self.name_ttl, self.max_names = name_every, name_ttl, max_names
         self.verify = verify
         self.verify_blocking = verify_blocking
@@ -155,6 +157,27 @@ class QwenAssist:
 
     def stop(self) -> None:
         self._stop.set()
+
+
+def qwen_endpoint(url: str, model: str = None) -> dict:
+    """
+    Where Qwen runs → keyword arguments for QwenEngine:
+      self-hosted vLLM   no API key; model = QWEN_MODEL or the one the server serves
+      OpenRouter         QWEN_URL=openrouter (or https://openrouter.ai/api/v1);
+                         key OPENROUTER_API_KEY; model = QWEN_MODEL or qwen/qwen3-vl-8b-instruct
+    """
+    url = qwen_url(url)
+    if is_openrouter(url):
+        key = os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            raise SystemExit("  Qwen via OpenRouter needs OPENROUTER_API_KEY in .env")
+        preset = PROVIDERS["openrouter"]
+        return {"api_key": key, "base_url": url,
+                "model_name": model or os.environ.get("QWEN_MODEL") or preset["model"],
+                "extra_body": preset["extra_body"]}
+    return {"api_key": "EMPTY", "base_url": url,
+            "model_name": model or os.environ.get("QWEN_MODEL") or first_served_model(url),
+            "extra_body": None}
 
 
 def first_served_model(url: str) -> str:

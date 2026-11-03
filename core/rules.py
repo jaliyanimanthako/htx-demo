@@ -5,7 +5,8 @@ Geometry used by detector-based runners (yoloe_infer.py, locate_live.py): each
 exit gets a clearance zone (lower part of the door + floor strip in front of
 it); an obstacle obstructs the exit if it stands on the floor inside the zone
 and overlaps it enough. Status follows from how much of the door width the
-obstacles cover.
+obstacles cover: < 30 % clear (e.g. a chair beside the frame), 30-60 % partially
+obstructed (narrowed, still passable), >= 60 % obstructed.
 """
 
 # ── Obstruction rule ──────────────────────────────────────────────────────────
@@ -13,6 +14,7 @@ ZONE_TOP_FRAC       = 0.45  # zone starts this far down the door (0 = top, 1 = b
 ZONE_BELOW_FRAC     = 0.25  # zone extends this much of the door height below the door
 ZONE_SIDE_FRAC      = 0.15  # zone is widened by this much of the door width each side
 MIN_ZONE_OVERLAP    = 0.25  # share of the obstacle box that must lie inside the zone
+PARTIAL_COVERAGE    = 0.30  # share of door width covered → "partially obstructed" (below: clear)
 OBSTRUCTED_COVERAGE = 0.60  # share of door width covered → "obstructed"
 
 # ── Geometry ──────────────────────────────────────────────────────────────────
@@ -88,7 +90,10 @@ def covers_door_base(ob: dict, door: dict) -> bool:
 
 
 def assess(exits: list, obstacles: list, img_w: int, img_h: int) -> list:
-    """Sets status/coverage on each exit; returns the obstacles that obstruct an exit."""
+    """Sets status/coverage on each exit; returns the obstacles that obstruct an exit —
+    one entry per (obstacle, exit): an obstacle in front of two exits is listed for both
+    (it used to be credited to the first one only, so the second showed "obstructed"
+    with no blockers)."""
     blocking = {}
     for ex in exits:
         bb     = ex["bounding_box"]
@@ -105,11 +110,11 @@ def assess(exits: list, obstacles: list, img_w: int, img_h: int) -> list:
                 a, b = max(ob_bb["x1"], bb["x1"]), min(ob_bb["x2"], bb["x2"])
                 if b > a:
                     spans.append((a, b))
-                blocking.setdefault(i, {**ob, "blocks_exit": ex["label"]})
+                blocking.setdefault((i, ex["label"]), {**ob, "blocks_exit": ex["label"]})
         coverage = _covered_width(spans) / door_w
         ex["coverage"] = round(coverage, 2)
         ex["status"] = ("obstructed" if coverage >= OBSTRUCTED_COVERAGE
-                        else "partially_obstructed" if spans
+                        else "partially_obstructed" if coverage >= PARTIAL_COVERAGE
                         else "clear")
     return list(blocking.values())
 

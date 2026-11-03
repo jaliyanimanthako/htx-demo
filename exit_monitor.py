@@ -9,11 +9,15 @@ Exit monitor — real-time exit / obstruction monitoring (3-speed architecture)
   QWEN (on events only)       new door → "is it an exit?"; new obstacle at a door →
                               "floor or furniture?"; obstacles at a door changed /
                               periodic → verdict C/P/B
-  EXIT MEMORY                 one record per exit: stable status (changes only after
-                              --hold seconds of agreement), since-when, blockers,
+  EXIT MEMORY                 one record per exit: stable status (a vote over the last
+                              --hold seconds; a change needs 60 %), since-when, blockers,
                               snapshot, history → panel + event log + JSON report
 
-Nothing in the fast loop waits for LocateAnything or Qwen. Without YOLOE
+Nothing in the fast loop waits for LocateAnything or Qwen — except in OFFLINE mode
+(--offline, video files): every frame is processed, LocateAnything runs every
+--la-interval seconds of VIDEO time and each Qwen check is waited for, so slow model
+servers or a hosted API (e.g. OpenRouter) cost processing time, not missed results.
+The result is saved as a video (results/exit_monitor_<video>/<video>_annotated.mp4). Without YOLOE
 (--no-yoloe) tracks come from LocateAnything only and are carried between its
 results by camera-motion compensation (simpler, ~1-2 s stale).
 
@@ -23,11 +27,13 @@ Usage:
                                       --qwen-url http://<server-ip>:8010/v1
   python exit_monitor.py IMG_0451.MOV --no-yoloe            # LocateAnything + Qwen only
   python exit_monitor.py IMG_0451.MOV --no-display --stream # headless → browser :8090
+  python exit_monitor.py IMG_0451.MOV --offline --no-display --qwen-url openrouter
   python exit_monitor.py rtsp://<server>:8554/cam           # live camera later
   q / Esc quits, space pauses.
 """
 
 import argparse
+import collections
 import json
 import os
 import queue
@@ -47,10 +53,11 @@ from core.drawing import text_scale
 from core.labels import DOOR_LABELS, OBSTACLE_LABELS, SIGN_LABELS, kind_of, norm_box_to_pixels
 from core.parsing import STATUS_CODES
 from core.prompts import CONFIRM_PROMPT, DEPTH_PROMPT, VERDICT_PROMPT
-from core.qwen_assist import QwenAssist, first_served_model
+from core.config import is_openrouter
+from core.qwen_assist import QwenAssist, qwen_endpoint
 from core.rules import assess, box_iou, containment, merge_double_doors
 from core.stream_view import MJPEGStreamer
-from core.video_io import LiveSource, MotionCompensator
+from core.video_io import LiveSource, MotionCompensator, Progress, VideoSaver
 from engines.locate_engine import LocateEngine
 from engines.qwen_engine import QwenEngine
 
@@ -60,6 +67,10 @@ STATUS_TEXT = {"unknown": "CHECKING", "clear": "CLEAR",
 STATUS_BGR = {"unknown": (160, 160, 160), "clear": (0, 200, 0),
               "partially_obstructed": (0, 200, 255), "obstructed": (0, 0, 255)}
 OBSTACLE_BGR = (0, 128, 255)
+MIN_SHOWN_W = 0.04   # an exit less than this share of the frame width (leaving the picture) isn't drawn
+VERDICT_MIN_GAP = 1.5  # s between Qwen verdicts for one exit, however often its zone changes
+BLOCKER_HOLD = 0.8   # s an obstacle stays drawn after it was last in an exit's zone (no blinking)
+SHOW_MIN_HITS = 4    # an obstacle is drawn once seen in this many frames (no 1-2 frame ghosts)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -79,6 +90,23 @@ def _warp(box, M) -> list:
     return [*pts.min(axis=0).tolist(), *pts.max(axis=0).tolist()]
 
 
+def _area(box) -> float:
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+def _shown_w(box, W) -> float:
+    """Visible width of a box as a share of the frame width."""
+    return max(0.0, min(W, box[2]) - max(0.0, box[0])) / W
+
+
+def _is_leaf_of(leaf, door) -> bool:
+    """One leaf of a double door: inside the door box, about as tall, clearly narrower.
+    (Only then is the whole-door box kept; any other change updates it normally.)"""
+    lh, dh = leaf[3] - leaf[1], door[3] - door[1]
+    return (containment(leaf, door) >= 0.85 and dh > 0 and abs(lh - dh) <= 0.2 * dh
+            and (leaf[2] - leaf[0]) < 0.75 * (door[2] - door[0]))
+
+
 def _bbdict(box, W, H) -> dict:
     return {"x1": int(max(0, box[0])), "y1": int(max(0, box[1])),
             "x2": int(min(W, box[2])), "y2": int(min(H, box[3]))}
@@ -87,9 +115,18 @@ def _bbdict(box, W, H) -> dict:
 # ── Fast detector ─────────────────────────────────────────────────────────────
 
 class FastDetector:
-    """YOLOE with text prompts (lazy import so --no-yoloe works without ultralytics)."""
+    """
+    YOLOE with text prompts (lazy import so --no-yoloe works without ultralytics).
+    tracker="bytetrack" | "botsort": Ultralytics' tracker matches detections frame to
+    frame (Kalman filter; a second pass with low-score boxes keeps tracks alive; BoT-SORT
+    also compensates camera motion). Each detection then carries "ext_id", which the
+    Tracker below follows; None = our own IoU matching only.
+    """
 
-    def __init__(self, model_name: str, imgsz: int = 640):
+    TRACKER_CFG = {"bytetrack": "core/trackers/bytetrack.yaml",
+                   "botsort": "core/trackers/botsort.yaml"}
+
+    def __init__(self, model_name: str, imgsz: int = 640, tracker: str = None):
         import yoloe_infer as Y
         from ultralytics import YOLOE
         self.Y, self.imgsz = Y, imgsz
@@ -103,16 +140,37 @@ class FastDetector:
             self.model = YOLOE(model_name)
             self.model.set_classes(self.names, self.model.get_text_pe(self.names))
         self.conf = {"door": Y.DOOR_CONF, "sign": Y.SIGN_CONF, "obstacle": Y.OBSTACLE_CONF}
+        self.tracker = tracker if tracker in self.TRACKER_CFG else None
+        self.reset()
+
+    def reset(self) -> None:
+        """New video / camera: the next frame starts the external tracker afresh."""
+        self._fresh, self._known = True, set()
 
     def __call__(self, frame) -> list:
-        r = self.model.predict(frame, conf=min(self.conf.values()), imgsz=self.imgsz,
-                               device=self.device, verbose=False)[0]
+        if self.tracker:
+            cfg = str(Path(__file__).resolve().parent / self.TRACKER_CFG[self.tracker])
+            r = self.model.track(frame, conf=0.05, imgsz=self.imgsz, device=self.device,
+                                 verbose=False, tracker=cfg, persist=not self._fresh)[0]
+            self._fresh = False
+            ids = r.boxes.id.int().tolist() if r.boxes.id is not None else [None] * len(r.boxes)
+        else:
+            r = self.model.predict(frame, conf=min(self.conf.values()), imgsz=self.imgsz,
+                                   device=self.device, verbose=False)[0]
+            ids = [None] * len(r.boxes)
         out = []
-        for xyxy, cls, conf in zip(r.boxes.xyxy.tolist(), r.boxes.cls.int().tolist(),
-                                   r.boxes.conf.tolist()):
+        for xyxy, cls, conf, eid in zip(r.boxes.xyxy.tolist(), r.boxes.cls.int().tolist(),
+                                        r.boxes.conf.tolist(), ids):
             kind = self.kind[self.names[cls]]
-            if kind != "decoy" and conf >= self.conf[kind]:
-                out.append({"kind": kind, "label": self.names[cls], "box": xyxy})
+            if kind == "decoy":
+                continue
+            # a new ID needs the usual per-class confidence; an existing one may continue
+            # on a low-score box (that is the point of ByteTrack's second pass)
+            if conf < self.conf[kind] and (eid is None or eid not in self._known):
+                continue
+            if eid is not None:
+                self._known.add(eid)
+            out.append({"kind": kind, "label": self.names[cls], "box": xyxy, "ext_id": eid})
         return out
 
 
@@ -149,31 +207,50 @@ class Tracker:
         strong = source == "la"
         unmatched = list(range(len(self.tracks)))
         for d in dets:
+            eid = d.get("ext_id")             # ByteTrack / BoT-SORT ID (None: IoU matching)
             best, best_iou = None, -1.0
-            for ti in unmatched:
-                t = self.tracks[ti]
-                if t["kind"] == d["kind"] and self._same(d["kind"], d["box"], t["box"]):
-                    iou = box_iou(d["box"], t["box"])
-                    if iou > best_iou:
-                        best, best_iou = ti, iou
+            if eid is not None:
+                best = next((ti for ti in unmatched if self.tracks[ti].get("ext_id") == eid
+                             and self.tracks[ti]["kind"] == d["kind"]), None)
+                ghost = None if best is not None else next(
+                    (g for g in self.dead if g.get("ext_id") == eid and g["kind"] == d["kind"]), None)
+                if ghost:                      # the external tracker still knows it → same ID
+                    self.dead.remove(ghost)
+                    ghost.update(box=list(d["box"]), last_seen=now, hits=max(ghost["hits"], 2))
+                    self.tracks.append(ghost)
+                    continue
             if best is None:
+                for ti in unmatched:
+                    t = self.tracks[ti]
+                    if t["kind"] == d["kind"] and self._same(d["kind"], d["box"], t["box"]):
+                        iou = box_iou(d["box"], t["box"])
+                        if iou > best_iou:
+                            best, best_iou = ti, iou
+            if best is None:
+                # revive only on real overlap: a lost track's predicted box drifts, and a
+                # "detection inside it" test let one exit's ID jump onto another object
                 ghost = next((g for g in self.dead if g["kind"] == d["kind"]
-                              and self._same(d["kind"], d["box"], g["box"])), None)
+                              and box_iou(d["box"], g["box"]) >= 0.3), None)
                 if ghost:                      # same object seen again → same ID
                     self.dead.remove(ghost)
                     ghost.update(box=list(d["box"]), last_seen=now,
-                                 hits=max(ghost["hits"], 2))
+                                 hits=max(ghost["hits"], 2), ext_id=eid)
                     self.tracks.append(ghost)
                     continue
                 self.tracks.append({"id": self.next_id, "kind": d["kind"], "label": d["label"],
                                     "box": list(d["box"]), "hits": 3 if strong else 1,
                                     "first_seen": now, "last_seen": now, "source": source,
-                                    "signed": False, "depth": None, "exit_ok": None})
+                                    "signed": False, "depth": None, "exit_ok": None,
+                                    "ext_id": eid})
                 self.next_id += 1
                 continue
             unmatched.remove(best)
             t = self.tracks[best]
+            if eid is not None:
+                t["ext_id"] = eid
             w = 0.8 if strong else 0.6
+            if d["kind"] == "door" and not strong and _is_leaf_of(d["box"], t["box"]):
+                w = 0.0     # only one leaf of a known door seen → keep the whole-door box
             t["box"] = [w * a + (1 - w) * b for a, b in zip(d["box"], t["box"])]
             if strong or t["source"] != "la":
                 t["label"] = d["label"]          # LocateAnything labels win
@@ -193,7 +270,12 @@ class Tracker:
                 for b in ts[i + 1:]:
                     if b["id"] in gone:
                         continue
-                    if kind == "door":
+                    # one of them only predicted (not detected lately): its box may have drifted
+                    # or grown, so it merges only on real overlap and the fresh box wins
+                    coasting = a["last_seen"] != b["last_seen"]
+                    if coasting:
+                        dup = box_iou(a["box"], b["box"]) >= 0.3
+                    elif kind == "door":
                         dup = (max(containment(a["box"], b["box"]), containment(b["box"], a["box"])) >= 0.6
                                or len(merge_double_doors([
                                    {"box": a["box"], "conf": 1, "signed": False, "weak": False},
@@ -202,7 +284,10 @@ class Tracker:
                         dup = box_iou(a["box"], b["box"]) >= 0.5
                     if not dup:
                         continue
-                    if kind == "door":
+                    if coasting:
+                        if b["last_seen"] > a["last_seen"]:
+                            a["box"] = list(b["box"])
+                    elif kind == "door":
                         if b["source"] == "la" and a["source"] != "la":
                             a["box"] = list(b["box"])          # LocateAnything box wins
                         elif a["source"] == b["source"]:       # two leaves → one door
@@ -223,16 +308,25 @@ class Tracker:
         return merged
 
     def prune(self, now: float, W: int, H: int) -> None:
+        def _blown_up(t, now):
+            """Only predicted lately and now implausibly large (camera walked forward)."""
+            b = t["box"]
+            return t["last_seen"] < now and ((b[3] - b[1]) > 1.3 * H or _area(b) > 0.8 * W * H)
+
         def alive(t):
             ttl = self.ttl_la if t["source"] == "la" else self.ttl_fast
             if t["kind"] == "door" and (t["signed"] or t["exit_ok"]):
                 ttl *= 2                          # confirmed exits are held longer
             b = t["box"]
             on_screen = b[2] > 0 and b[0] < W and b[3] > 0 and b[1] < H
-            return on_screen and now - t["last_seen"] <= ttl
+            # a box only predicted for a while can drift / blow up (camera walking forward)
+            return on_screen and not _blown_up(t, now) and now - t["last_seen"] <= ttl
         keep, lost = [], []
         for t in self.tracks:
-            (keep if alive(t) else lost).append(t)
+            if alive(t):
+                keep.append(t)
+            elif not _blown_up(t, now):       # a blown-up box is not worth reviving
+                lost.append(t)
         self.tracks = keep
         self.dead = [g for g in self.dead + lost if now - g["last_seen"] <= self.revive_s]
 
@@ -247,14 +341,23 @@ class ExitRecord:
         self.id = tid
         self.status, self.since, self.since_vt = "unknown", now, vt
         self.candidate, self.cand_since = "unknown", now
+        self.cands = collections.deque()   # (time, candidate) over the last --hold s → status vote
         self.blockers: list = []
         self.blocker_ids: list = []
+        self.zone_seen: dict = {}         # obstacle id → last time it was in the zone (display)
         self.qwen_verdict, self.qwen_t = None, 0.0
-        self.verdict_req_t, self.verdict_req_set = 0.0, None
+        self.verdict_req_t, self.verdict_req_set = -1e9, None
         self.first_vt = self.last_vt = vt
         self.visible = True
         self.snapshot = None
         self.history: list = []
+
+
+def _vote(cands: list):
+    """Most common candidate (ties → the more severe) and its share of the window."""
+    counts = collections.Counter(cands)
+    winner = max(counts, key=lambda c: (counts[c], STATUS_RANK.get(c, -1)))
+    return winner, counts[winner] / len(cands)
 
 
 def _more_severe(a: str, b: str) -> str:
@@ -277,17 +380,21 @@ class ExitMonitor:
         self.on_frame, self.on_event = on_frame, on_event
         self._halt = threading.Event()
         self.report_path = None
-        self.fast = None if args.no_yoloe else (fast_detector or FastDetector(args.yoloe_model))
+        if args.locate_url and is_openrouter(args.qwen_url):
+            print("  Qwen via OpenRouter → LocateAnything off (YOLOE + Qwen only)")
+            args.locate_url = None
+        self.fast = None if args.no_yoloe else (
+            fast_detector or FastDetector(args.yoloe_model, tracker=args.tracker))
         self.locate = LocateEngine(args.locate_url, max_image_side=args.proc_width,
                                    mode=args.mode) if args.locate_url else None
         self.qwen = None
         self.assist = None
         self.base_cats = DOOR_LABELS + SIGN_LABELS + OBSTACLE_LABELS
         if args.qwen_url:
-            model = args.qwen_model or first_served_model(args.qwen_url)
-            self.qwen = QwenEngine("EMPTY", model, args.qwen_url, max_image_side=640, max_tokens=8)
+            endpoint = qwen_endpoint(args.qwen_url, args.qwen_model)   # self-hosted or OpenRouter
+            self.qwen = QwenEngine(**endpoint, max_image_side=640, max_tokens=8)
             if self.locate:
-                self.assist = QwenAssist(args.qwen_url, model, name_every=args.name_every,
+                self.assist = QwenAssist(endpoint, name_every=args.name_every,
                                          verify=False, base_categories=self.base_cats)
         if not (self.fast or self.locate):
             raise SystemExit("Need YOLOE or --locate-url (or both).")
@@ -304,6 +411,8 @@ class ExitMonitor:
         self.confirm_pool = ThreadPoolExecutor(max_workers=1)    # "is it an exit?" never queues
         self.qwen_out = queue.Queue()
         self.pending = set()              # (job kind, track id) in flight
+        self._futures = []                # Qwen jobs in flight (offline mode waits for them)
+        self._la_last_vt = None           # offline: video time of the last LocateAnything call
         self.full, self.full_scale = None, 1.0
         self._last_size = None
         self._flog = {"la": [], "q_out": [], "q_in": []}   # per-frame log notes
@@ -336,27 +445,32 @@ class ExitMonitor:
             if job is None:
                 time.sleep(0.02)
                 continue
-            frame, C, W, H = job
             last = time.time()
-            self._note("la", "sent frame")
-            img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            cats = self.base_cats
-            if self.assist:
-                self.assist.note_image(img)
-                cats = cats + self.assist.extra_categories(self.base_cats)
-            try:
-                res = self.locate.detect_raw(img, cats)
-            except Exception as e:
-                print(f"  [locate] error: {e}")
-                continue
-            dets = []
-            for b in res["boxes"]:
-                bb = norm_box_to_pixels(b, W, H)
-                dets.append({"kind": kind_of(b["label"], DOOR_LABELS, SIGN_LABELS),
-                             "label": b["label"], "box": [bb["x1"], bb["y1"], bb["x2"], bb["y2"]]})
-            self._note("la", f"result back: {len(dets)} boxes "
-                              f"({time.time() - last:.1f}s)")
-            self.la_out.put((dets, C, res.get("latency_s", 0)))
+            out = self._la_detect(*job)
+            if out:
+                self.la_out.put(out)
+
+    def _la_detect(self, frame, C, W, H):
+        """One LocateAnything call → (detections, C at that frame, latency) or None."""
+        t = time.time()
+        self._note("la", "sent frame")
+        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        cats = self.base_cats
+        if self.assist:
+            self.assist.note_image(img)
+            cats = cats + self.assist.extra_categories(self.base_cats)
+        try:
+            res = self.locate.detect_raw(img, cats)
+        except Exception as e:
+            print(f"  [locate] error: {e}")
+            return None
+        dets = []
+        for b in res["boxes"]:
+            bb = norm_box_to_pixels(b, W, H)
+            dets.append({"kind": kind_of(b["label"], DOOR_LABELS, SIGN_LABELS),
+                         "label": b["label"], "box": [bb["x1"], bb["y1"], bb["x2"], bb["y2"]]})
+        self._note("la", f"result back: {len(dets)} boxes ({time.time() - t:.1f}s)")
+        return dets, C, res.get("latency_s", 0)
 
     # ── Qwen jobs ────────────────────────────────────────────────────────────
     def _submit(self, kind: str, tid: int, frame, box, extra=None):
@@ -392,7 +506,8 @@ class ExitMonitor:
                 self.qwen_out.put((kind, tid, val, extra))
             except Exception as e:
                 self.qwen_out.put((kind, tid, None, f"error: {e}"))
-        (self.confirm_pool if kind == "confirm" else self.qwen_pool).submit(job)
+        self._futures = [f for f in self._futures if not f.done()]
+        self._futures.append((self.confirm_pool if kind == "confirm" else self.qwen_pool).submit(job))
 
     def _apply_qwen(self, now: float, vt: float):
         while True:
@@ -465,6 +580,10 @@ class ExitMonitor:
             rec.visible, rec.last_vt = True, vt
             zone = sorted(int(b["label"][1:]) for b in blocking if b["blocks_exit"] == ed["label"])
             rec.blocker_ids = zone
+            for oid in zone:
+                rec.zone_seen[oid] = now
+            rec.zone_seen = {o: t for o, t in rec.zone_seen.items()
+                             if now - t <= BLOCKER_HOLD and o in by_id}
             labels = [by_id[i]["label"] for i in zone if i in by_id]
             rec.blockers = [f"{l} x{labels.count(l)}" if labels.count(l) > 1 else l
                             for l in dict.fromkeys(labels)]
@@ -477,7 +596,7 @@ class ExitMonitor:
                 if o and o["depth"] is None:
                     self._submit("depth", oid, frame, o["box"], extra=o["label"])
             zone_key = tuple(zone)
-            if d["exit_ok"] is not False and (
+            if d["exit_ok"] is not False and now - rec.verdict_req_t >= VERDICT_MIN_GAP and (
                     zone_key != rec.verdict_req_set
                     or now - rec.verdict_req_t > self.args.recheck):
                 rec.verdict_req_set, rec.verdict_req_t = zone_key, now
@@ -489,12 +608,20 @@ class ExitMonitor:
                 cand = _more_severe(cand, rec.qwen_verdict)
             if cand != rec.candidate:
                 rec.candidate, rec.cand_since = cand, now
+            rec.cands.append((now, cand))
+            while rec.cands and now - rec.cands[0][0] > self.args.hold:
+                rec.cands.popleft()
             # with Qwen, a door gets a status only once confirmed as an exit
             # (or after confirm_timeout s without an answer) — no alerts on TVs/cupboards
             confirmed = (not self.qwen or d["exit_ok"] is True
                          or now - d["first_seen"] >= self.args.confirm_timeout)
-            if confirmed and cand != rec.status and now - rec.cand_since >= self.args.hold:
-                self._event(rec, cand, frame, now, vt, d)
+            # the per-frame candidate flickers (boxes jitter at the zone edge), so the status
+            # is a vote over the last --hold s: the first one is the most common candidate,
+            # a change needs 60% of the window
+            if confirmed and now - d["first_seen"] >= self.args.hold:
+                winner, share = _vote([c for _, c in rec.cands])
+                if winner != rec.status and (rec.status == "unknown" or share >= 0.6):
+                    self._event(rec, winner, frame, now, vt, d)
 
         for tid, rec in self.exits.items():
             if tid not in visible_ids and rec.visible:
@@ -535,6 +662,8 @@ class ExitMonitor:
             t = by_id.get(tid)
             if not rec.visible or t is None:
                 continue
+            if t["exit_ok"] is False or _shown_w(t["box"], out.shape[1]) < MIN_SHOWN_W:
+                continue
             x1, y1, x2, y2 = (int(v) for v in t["box"])
             col = STATUS_BGR[rec.status]
             cv2.rectangle(out, (x1, y1), (x2, y2), col, th + 2)
@@ -546,7 +675,9 @@ class ExitMonitor:
         for t in self.tracker.visible("obstacle"):
             if t["depth"] == "furniture":
                 continue
-            in_zone = any(t["id"] in r.blocker_ids for r in self.exits.values() if r.visible)
+            in_zone = any(t["id"] in r.zone_seen for r in self.exits.values() if r.visible)
+            if t["hits"] < SHOW_MIN_HITS:
+                continue
             if not in_zone:
                 continue
             x1, y1, x2, y2 = (int(v) for v in t["box"])
@@ -568,7 +699,7 @@ class ExitMonitor:
                           "status": r.status, "status_text": STATUS_TEXT[r.status],
                           "since_s": round(now - r.since, 1), "blockers": r.blockers,
                           "visible": r.visible})
-        return {"video_time_s": round(vt, 2), "fps": round(fps, 1), "exits": exits,
+        return {"video_time_s": round(vt, 2), "fps": round(fps, 1) if fps else None, "exits": exits,
                 "events": [{"video_time_s": round(t, 2), "text": m, "status": st}
                            for t, m, st in self.events[-20:]]}
 
@@ -585,9 +716,10 @@ class ExitMonitor:
         h = 200
         p = np.full((h, width, 3), 30, np.uint8)
         f = cv2.FONT_HERSHEY_SIMPLEX
-        mode = ("YOLOE + " if self.fast else "") + ("LocateAnything" if self.locate else "") \
-            + (" + Qwen" if self.qwen else "")
-        cv2.putText(p, f"EXITS   t={vt:5.1f}s   {fps:4.1f} fps   [{mode}]", (12, 26), f, 0.7,
+        mode = " + ".join(n for n, on in (("YOLOE", self.fast), ("LocateAnything", self.locate),
+                                           ("Qwen", self.qwen)) if on)
+        speed = "offline" if fps is None else f"{fps:4.1f} fps"
+        cv2.putText(p, f"EXITS   t={vt:5.1f}s   {speed}   [{mode}]", (12, 26), f, 0.7,
                     (230, 230, 230), 2, cv2.LINE_AA)
         y = 56
         recs = sorted(self.exits.values(), key=lambda r: (not r.visible, r.id))
@@ -610,7 +742,9 @@ class ExitMonitor:
     # ── main loop ────────────────────────────────────────────────────────────
     def run(self):
         a = self.args
-        src = LiveSource(a.source, loop=a.loop)
+        if a.offline and not Path(a.source).is_file():
+            raise SystemExit("  --offline needs a video file (not a camera or stream)")
+        src = LiveSource(a.source, loop=a.loop and not a.offline, realtime=not a.offline)
         scale = min(1.0, a.proc_width / src.width)
         W, H = int(src.width * scale) // 2 * 2, int(src.height * scale) // 2 * 2
         stem = Path(a.source).stem if Path(a.source).is_file() else "live"
@@ -618,7 +752,8 @@ class ExitMonitor:
         out_dir.mkdir(parents=True, exist_ok=True)
         self.snap_dir = out_dir
         print(f"  Source: {a.source} | {src.width}x{src.height} @ {src.fps:.1f} fps "
-              f"(processing {W}x{H}) | output → {out_dir}\n")
+              f"(processing {W}x{H}) | {'OFFLINE (every frame, waits for the models)' if a.offline else 'real time'}"
+              f" | output → {out_dir}\n")
 
         self.start_workers()
         # --stream: simple browser view (+ /stream/original, /stream/annotated, /state).
@@ -627,10 +762,9 @@ class ExitMonitor:
         half = min(W, 800)
         out_w = 2 * half
         out_h = int(H * half / W) // 2 * 2 + 200
-        writer = None
-        if a.save:
-            Path(a.save).parent.mkdir(parents=True, exist_ok=True)
-            writer = cv2.VideoWriter(a.save, cv2.VideoWriter_fourcc(*"mp4v"), src.fps, (out_w, out_h))
+        save = a.save or (str(out_dir / f"{stem}_annotated.mp4") if a.offline else None)
+        saver = VideoSaver(save, src.fps) if save else None
+        progress = Progress(src.frame_count) if a.offline else None
         win = "Exit monitor (q: quit, space: pause)"
         times = []
         try:
@@ -646,7 +780,9 @@ class ExitMonitor:
                 times.append(time.time() - t_frame)
                 if a.log_frames:
                     self._print_frame(idx, vt, 1000 * times[-1], fast_info, la_merged)
-                fps = 1.0 / max(1e-3, np.mean(times[-30:]))
+                fps = None if a.offline else 1.0 / max(1e-3, np.mean(times[-30:]))
+                if progress:
+                    progress.update(idx, vt)
                 top = cv2.hconcat([frame, annotated])
                 top = cv2.resize(top, (out_w, out_h - 200), interpolation=cv2.INTER_AREA)
                 combined = cv2.vconcat([top, self._panel(out_w, now, vt, fps)])
@@ -661,9 +797,8 @@ class ExitMonitor:
                     streamer.publish(frame, "original")              # /stream/original
                     streamer.publish(annotated, "annotated")         # /stream/annotated
                     streamer.set_state(self._state(now, vt, fps))    # /state (JSON)
-                if writer:
-                    for _ in range(skipped + 1):
-                        writer.write(combined)
+                if saver:
+                    saver.write(combined if a.save_view == "combined" else annotated, skipped + 1)
                 if not a.no_display:
                     cv2.imshow(win, combined)
                     key = cv2.waitKey(1) & 0xFF
@@ -678,8 +813,6 @@ class ExitMonitor:
             if self.assist:
                 self.assist.stop()
             src.release()
-            if writer:
-                writer.release()
             if streamer:
                 streamer.stop()
             if not a.no_display:
@@ -687,11 +820,15 @@ class ExitMonitor:
             self.qwen_pool.shutdown(wait=False, cancel_futures=True)
             self.confirm_pool.shutdown(wait=False, cancel_futures=True)
             self._report(out_dir, src, times)
+            if saver:
+                path = saver.close()
+                if path:
+                    print(f"  Video : {path}  ({saver.frames} frames @ {src.fps:.1f} fps)")
 
     # ── one frame (used by run() and by the backend's live mode) ─────────────
     def start_workers(self) -> None:
-        """Start the LocateAnything worker (once)."""
-        if self.locate and not getattr(self, "_la_started", False):
+        """Start the LocateAnything worker (once; offline mode calls it in step())."""
+        if self.locate and not self.args.offline and not getattr(self, "_la_started", False):
             threading.Thread(target=self._la_worker, daemon=True).start()
             self._la_started = True
 
@@ -710,7 +847,7 @@ class ExitMonitor:
         self.full, self.full_scale = frame, 1.0 / scale
         if (W, H) != (W0, H0):
             frame = cv2.resize(frame, (W, H), interpolation=cv2.INTER_AREA)
-        now = time.time()
+        now = vt if self.args.offline else time.time()     # offline: the video's clock
 
         M, C = self._motion_step(frame)
         self.tracker.predict(M)
@@ -721,14 +858,23 @@ class ExitMonitor:
             dets = self.fast(frame)
             fast_info = (len(dets), 1000 * (time.time() - t_y))
             doors = merge_double_doors([{"box": d["box"], "conf": 1.0, "signed": False,
-                                         "weak": False} for d in dets if d["kind"] == "door"])
+                                         "weak": False, "ext_id": d.get("ext_id")}
+                                        for d in dets if d["kind"] == "door"])
             dets = [d for d in dets if d["kind"] != "door"] + \
-                   [{"kind": "door", "label": "door", "box": d["box"]} for d in doors]
+                   [{"kind": "door", "label": "door", "box": d["box"], "ext_id": d.get("ext_id")}
+                    for d in doors]
             self.tracker.update(dets, now, "fast")
 
+        if self.locate and self.args.offline:
+            if self._la_last_vt is None or vt - self._la_last_vt >= self.args.la_interval:
+                self._la_last_vt = vt         # wait for it: merged in this very frame
+                out = self._la_detect(frame.copy(), C.copy(), W, H)
+                if out:
+                    self.la_out.put(out)
         if self.locate:
-            with self.lock:
-                self.la_in = (frame.copy(), C.copy(), W, H)
+            if not self.args.offline:
+                with self.lock:
+                    self.la_in = (frame.copy(), C.copy(), W, H)
             while not self.la_out.empty():
                 la_dets, C_ref, _ = self.la_out.get()
                 la_merged += len(la_dets)
@@ -753,6 +899,11 @@ class ExitMonitor:
         self.tracker.prune(now, W, H)
         self._apply_qwen(now, vt)
         self._update_exits(frame, W, H, now, vt)
+        if self.args.offline:             # wait for this frame's Qwen checks and apply them now,
+            for f in self._futures:       # before drawing (else a desk item or a non-exit door
+                f.result()                # shows for exactly one frame)
+            self._futures = []
+            self._apply_qwen(now, vt)
         return frame, fast_info, la_merged, now
 
     def reset(self) -> None:
@@ -760,6 +911,9 @@ class ExitMonitor:
         self.tracker = Tracker(ttl_la=max(4.0, 3 * self.args.la_interval))
         self.exits, self.merged = {}, {}
         self.motion, self.prev_C, self._last_size = None, None, None
+        self._la_last_vt = None
+        if self.fast and hasattr(self.fast, "reset"):
+            self.fast.reset()
         with self.lock:
             self.la_in = None
         while not self.la_out.empty():
@@ -777,15 +931,15 @@ class ExitMonitor:
         exits, obstacles = [], {}
         for tid, rec in self.exits.items():
             t = by_id.get(tid)
-            if not rec.visible or t is None:
+            if not rec.visible or t is None or t["exit_ok"] is False or _shown_w(t["box"], W) < MIN_SHOWN_W:
                 continue
             exits.append({"id": tid, "exit_sign": bool(t["signed"]), "confirmed": t["exit_ok"],
                           "status": rec.status, "status_text": STATUS_TEXT[rec.status],
                           "since_s": round(now - rec.since, 1), "blockers": rec.blockers,
                           "box": norm(t["box"])})
-            for oid in rec.blocker_ids:
+            for oid in rec.zone_seen:           # held a moment → no blinking in the web app
                 o = by_id.get(oid)
-                if o and o["depth"] != "furniture":
+                if o and o["depth"] != "furniture" and o["hits"] >= SHOW_MIN_HITS:
                     obstacles[oid] = {"id": oid, "label": o["label"], "depth": o["depth"],
                                       "exit_id": tid, "box": norm(o["box"])}
         return {"exits": exits, "obstacles": list(obstacles.values())}
@@ -831,11 +985,18 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--locate-url", default=os.environ.get("LOCATE_URL"),
                     help="LocateAnything server (default: $LOCATE_URL)")
     ap.add_argument("--qwen-url", default=os.environ.get("QWEN_URL"),
-                    help="Qwen vLLM server, e.g. http://host:8010/v1 (default: $QWEN_URL)")
-    ap.add_argument("--qwen-model", default=None)
+                    help="Qwen server: an address (http://host:8010/v1), 'openrouter', or a name "
+                         "from .env such as 'gpu' / 'mac' (default: $QWEN_URL; see qwen_server.py)")
+    ap.add_argument("--qwen-model", default=None,
+                    help="Model name (default: $QWEN_MODEL, the served model, or "
+                         "qwen/qwen3-vl-8b-instruct on OpenRouter)")
     ap.add_argument("--no-yoloe", action="store_true",
                     help="LocateAnything + Qwen only (no per-frame detector)")
     ap.add_argument("--yoloe-model", default="yoloe-11s-seg.pt")
+    ap.add_argument("--tracker", choices=["ours", "bytetrack", "botsort"], default="ours",
+                    help="Frame-to-frame matching of YOLOE detections: our IoU tracker (default), "
+                         "or Ultralytics ByteTrack / BoT-SORT (camera-motion compensation); "
+                         "exit logic, LocateAnything merging and IDs stay ours either way")
     ap.add_argument("--mode", default="hybrid", choices=["fast", "hybrid", "slow"],
                     help="LocateAnything decoding mode")
     ap.add_argument("--la-interval", type=float, default=1.0,
@@ -843,7 +1004,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--name-every", type=float, default=3.0,
                     help="Seconds between Qwen object-naming calls (default: 3)")
     ap.add_argument("--hold", type=float, default=1.5,
-                    help="Seconds a new status must hold before an exit changes (default: 1.5)")
+                    help="Status = vote over this many seconds; a change needs 60%% of it "
+                         "(default: 1.5)")
     ap.add_argument("--recheck", type=float, default=8.0,
                     help="Re-ask Qwen for a verdict at least this often per exit (default: 8 s)")
     ap.add_argument("--verdict-ttl", type=float, default=6.0,
@@ -857,6 +1019,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="No per-frame log line (events only)")
     ap.add_argument("--stream", type=int, nargs="?", const=8090, default=None, metavar="PORT")
     ap.add_argument("--save", default=None, help="Record the output view to this .mp4")
+    ap.add_argument("--offline", action="store_true",
+                    help="Video files: process every frame, run LocateAnything on the video's "
+                         "clock and wait for each Qwen check (nothing missed with slow servers "
+                         "or OpenRouter); saves the result video (default: results/"
+                         "exit_monitor_<video>/<video>_annotated.mp4)")
+    ap.add_argument("--save-view", choices=["combined", "annotated"], default="combined",
+                    help="What the saved video shows: original | annotated + status panel "
+                         "(combined, default) or the annotated frame only")
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--out-dir", default="results")

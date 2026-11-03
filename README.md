@@ -160,7 +160,7 @@ cd htx_demo
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.sample .env          # then fill in the server addresses
-.venv/bin/python tests/test_core.py    # offline sanity check: should print 16/16 passed
+.venv/bin/python tests/test_core.py    # offline sanity check: should print 17/17 passed
 ```
 
 The first YOLOE run downloads `yoloe-11s-seg.pt` and the MobileCLIP text encoder
@@ -287,9 +287,12 @@ Every program starts from `run.py` in the project root (`python run.py` lists th
 section covers the main one, the **fire safety inspection**, and its settings.
 **[docs/running.md](docs/running.md)** has the rest:
 
+- what runs where: the backend, the tablet app, the tablet web page and the web app;
 - running the demo at a venue, step by step (camera, laptop, tablet);
-- one-time setup for the laptop and the camera;
-- each monitor on its own, the backend and web app, the simpler runners and the tools.
+- the backend on a GPU server, and the backend's settings;
+- one-time setup for the laptop, the tablet app and the camera;
+- each monitor on its own, the backend and web app, the tablet web page, the simpler
+  runners, the tools and the tests.
 
 ### Fire safety inspection: `python run.py inspect`
 

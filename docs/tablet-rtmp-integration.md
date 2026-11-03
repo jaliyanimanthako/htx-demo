@@ -1,11 +1,10 @@
 # Tablet demo setup has moved
 
-The tablet and RTMP setup instructions are now part of the main
-[Setup and run the demo](running.md) guide.
+The tablet and RTMP setup instructions are now part of [running.md](running.md).
 
-Start with [Daily startup](running.md#daily-startup--if-everything-is-already-installed)
-if the equipment is already prepared, or [First-time setup](running.md#1-first-time-setup)
-for a new installation. [Choose a source](running.md#5-choose-a-source-on-the-tablet)
-explains the External camera option.
+Start with [The demo at a venue](running.md#the-demo-at-a-venue) if the equipment is
+already prepared, or [One-time setup](running.md#one-time-setup) for a new installation.
+[Connect the tablet](running.md#6-connect-the-tablet) explains the tablet's sources,
+including External camera.
 
 This page is kept so existing links continue to work.

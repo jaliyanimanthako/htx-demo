@@ -190,7 +190,8 @@ soon or check date), red (expired), purple (unreadable) and grey (reading).
 ## Session mode on Android (Pocket 3 picture)
 
 Here the backend reads the camera stream itself, and the app shows the video and the
-events it sends back. This mode is exits only.
+events it sends back. A session runs exits only unless the body asks for
+`"mode": "combined"` (exits and extinguishers, what the tablet app uses).
 
 1. **Start:** `POST /api/sessions` with this body:
 
@@ -199,7 +200,7 @@ events it sends back. This mode is exits only.
    ```
 
    - `<windows-host>` is Windows as seen from the backend in WSL; the runbook
-     ([running.md step 6](running.md#6-connect-the-tablet)) prints the full address. Make it a setting in the app.
+     ([running.md step 3](running.md#3-start-qwen-and-the-backend-wsl-terminal-1)) prints the full address. Make it a setting in the app.
    - `use_locate: false` matters on the laptop, which has no LocateAnything.
    - The reply is the [session object](#session-object). Keep its `id`.
 2. **Picture:** read `GET /api/sessions/{id}/stream/annotated` (or `original`,

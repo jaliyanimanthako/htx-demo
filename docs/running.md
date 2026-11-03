@@ -1,329 +1,17 @@
-# Setup and run the demo
-
-Use this guide to run the tablet demo with the backend on either the Windows/WSL
-laptop or the GPU server. The tablet offers **Pre-recorded video**, **Tablet camera**,
-and **External camera**, with exit/obstruction and extinguisher detection together.
-
-The tablet displays results; the backend computer runs detection. Qwen adds exit
-checks and extinguisher date reading when available. The tablet does not run models
-or start model services.
-
-For normal use, edit the **root `config.toml` on the backend computer**. You do not
-need separate configuration files for different machines to get started.
-
-## Daily startup — if everything is already installed
-
-Before these steps, start the model services. If using an external camera, also
-start MediaMTX and the camera's livestream.
-
-1. Set the camera URL and model settings in `config.toml`.
-2. Activate the backend's Python environment and run `python run.py backend`.
-3. In the tablet's **Settings**, enter the backend computer's address and token.
-4. Choose **External camera**, **Tablet camera**, or **Pre-recorded video**.
-
-Install the updated tablet app to get the External camera option. Restart the
-backend whenever you change `config.toml`.
-
-For first-time setup, follow the numbered sections below. The
-[command reference](#command-reference) at the bottom covers the individual monitors,
-web interface and other tools.
-
-## 1. First-time setup
-
-On the computer that will run detection:
-
-- Get this repository, including the integrated tablet/RTMP changes.
-- Prepare the Python environment and model services using the
-  [repository setup instructions](../README.md#setup).
-- Prepare `.env` from `.env.sample` if `.env` does not already exist. Set
-  `BACKEND_TOKEN` to the token you want the tablet to use. Keep it in `.env` or an
-  environment variable; do not put it in `config.toml`.
-- If using an external camera, set up MediaMTX and the camera using the
-  [camera setup guide](live-camera.md). For the existing venue laptop, the
-  [venue checklist](run.md) has the Windows firewall and WSL forwarding steps,
-  and [camera/Mimo steps](run-2.md) cover starting the Pocket 3 livestream.
-
-Install the tablet APK on the Android device. Build/install instructions are in the
-[Android developer setup](../android-app/README.md#developer-setup). If you already
-have the APK and Android platform tools, install it with:
-
-```bash
-adb install -r android-app/app/build/outputs/apk/debug/app-debug.apk
-```
-
-The tablet must be able to reach the backend computer over the network. When using
-an external camera, the backend must also be able to reach its video relay.
-
-## 2. Edit the root config.toml
-
-Open `config.toml` in the project folder **on the backend computer**. Edit the
-existing sections; do not paste a second copy of a table into the file.
-
-The most relevant settings are:
-
-| Setting | What to enter |
-|---|---|
-| `[sources.external_camera] url` | Camera stream address reachable from the backend, e.g. `rtsp://<relay-host>:8554/live/x2`. Leave empty if not using it. |
-| `[models] qwen_url` | Address of the running Qwen service, e.g. `http://localhost:8010/v1`. |
-| `[models] qwen_model` | The model that service actually serves, e.g. `2b` on the small-GPU laptop or `4b` on a suitable GPU server. |
-| `[models] yoloe_model` | Detection model; `11s` is the starting choice. |
-| `[models] locate_anything` | Set `false` when no LocateAnything service is being used. The current tablet requests it off. |
-| `[server] port` | Backend port; normally `8100`. |
-| `[server] video_dir` | Folder containing recordings available to the tablet; `.` means the project root. |
-| `[server] record` | `true` (default) saves every camera / stream session as two videos in `results/recordings/`: `<session>_original.mkv` (the frames analysed) and `<session>_annotated.mkv` (with boxes and statuses). Video-file sessions are not recorded. `record_fps` sets their frame rate (default 15). |
-
-For example, these are the relevant parts of a laptop configuration:
-
-```toml
-[models]
-yoloe_model = "11s"
-qwen = true
-qwen_model = "2b"
-qwen_url = "http://localhost:8010/v1"
-locate_anything = false
-
-[sources.external_camera]
-name = "External camera"
-url = "rtsp://<relay-host>:8554/live/x2"
-```
-
-Replace `<relay-host>` with the address of the machine running MediaMTX. In the
-Windows/WSL setup, that is the Windows host address reachable from WSL. On a GPU
-server, use the relay address reachable from that server.
-
-`localhost` means **this backend computer**. Use another machine's address when the
-relay or model service is elsewhere. The tablet's backend address is a different
-setting: you enter that in the tablet app, not in the camera URL.
-
-Changing a model name in TOML does not start or switch the model service. Start
-the matching service in the next step. `qwen_model = ""` accepts whichever model
-the Qwen endpoint serves. If a specified model does not match, tablet detection
-continues with Qwen assistance unavailable and dates unverified.
-
-Keep the other defaults initially. Resolution, frame-rate limits and detection
-thresholds can be adjusted later. See [Advanced configuration](#advanced-configuration).
-
-## 3. Start the services and backend
-
-Run commands from the project root. Choose the instructions for the computer
-running your backend.
-
-### Windows/WSL laptop
-
-In WSL, activate your prepared Python environment. The existing venue laptop uses
-`conda activate htx`; another installation may use a virtual environment instead.
-
-Start Qwen using the model selected in `config.toml`:
-
-```bash
-bash server/start_laptop.sh
-```
-
-Then start the backend in the prepared Python environment:
-
-```bash
-python run.py backend
-```
-
-Keep that terminal running. For an external camera, also start MediaMTX on Windows
-and start the camera livestream. Use the [venue checklist](run.md) for the Windows
-firewall and WSL port forwarding needed to reach the backend from the tablet.
-
-### GPU server
-
-With the NVIDIA driver available, the existing full-service launcher can prepare
-and start Qwen, LocateAnything and the backend:
-
-```bash
-bash server/start_all.sh
-```
-
-It uses the Qwen model selected in `config.toml` by default and prints the backend
-port and token. It starts both model services, so use the laptop route for the
-small-GPU laptop. The first run may take time to install environments and download
-weights.
-
-If model services are already running and you only need the backend, use:
-
-```bash
-bash server/run_backend.sh
-```
-
-Or, with a backend Python environment already active:
-
-```bash
-python run.py backend
-```
-
-The server scripts manage the Python environment for you; the plain `python`
-command assumes you have activated it yourself. If using model services on another
-machine, configure their addresses and start those services there separately.
-
-The backend prints its port at startup. If `8100` is occupied, it may choose the
-next free port. Use the actual printed port on the tablet.
-
-## 4. Connect the tablet
-
-1. Open the updated tablet app and tap **Settings**.
-2. Enter **Backend URL** as `http://<backend-computer-address>:<printed-port>`.
-3. Enter the **Backend token** from the backend's `.env` or startup output.
-4. Tap **Save**.
-
-For example, if the backend is reachable at `192.168.1.20` on port `8100`, enter
-`http://192.168.1.20:8100`. A physical tablet needs a reachable network address;
-`localhost` on the tablet points to the tablet itself. The Android emulator can use
-`http://10.0.2.2:8100` to reach the development computer.
-
-The tablet needs only the backend address and token. It does not need the external
-camera URL or the Qwen address.
-
-## 5. Choose a source on the tablet
-
-Tap **Start demo**, or **Change source** if a source was previously selected:
-
-| Source | What you need |
-|---|---|
-| **Pre-recorded video** | Choose a file from the backend's video list. Put recordings in `[server] video_dir`. |
-| **Tablet camera** | Grant Android camera permission when asked, then use the rear camera. |
-| **External camera** | A configured stream URL, the relay running, and the camera actively streaming. No tablet camera permission is needed. |
-
-The external-camera path is:
-
-```text
-Camera → RTMP → MediaMTX relay → RTSP → backend detection → tablet display
-```
-
-For a quick stream check on the backend machine, before opening the tablet feed:
-
-```bash
-python run.py camera-check rtsp://<relay-host>:8554/live/x2
-```
-
-The interface, box labels, colors and bottom summary stay the same across sources.
-When Qwen is unavailable, detection continues and extinguisher dates are marked
-unverified. One detection session runs at a time by default. Source switching waits
-for this tablet's previous session to stop; it does not stop another device's session.
-
-## 6. Troubleshooting
-
-| Problem | What to check |
-|---|---|
-| **External camera is not configured** | Set `[sources.external_camera] url` in `config.toml`, then restart the backend. |
-| External camera has no picture | Start MediaMTX and the camera livestream. Run `camera-check` on the backend computer using the same URL. See [camera troubleshooting](live-camera.md). |
-| **Backend unavailable** | Check the tablet's URL, printed port, network connection, firewall and WSL forwarding. |
-| Token/authentication failure | Enter the backend's current token in the tablet's Settings. |
-| **Qwen assistance unavailable** | Check the Qwen service, its URL and the selected model name. Detection can continue without it. |
-| No recordings listed | Check `[server] video_dir` and put supported video files there. |
-| New source option is missing | Install the newly built tablet APK. |
-| Settings changes have no effect | Restart the backend. Configuration is loaded at startup. |
-| Another demo is already running | Stop that demo on its owning device before starting another one. |
-
-The stream reader reconnects after camera interruptions. During a short outage the
-last picture may remain visible. If no frames arrive within `[input] stream_timeout`
-(default 30 seconds), the session ends with an error. Restore the stream and retry.
-Source switching can cancel a session waiting for its first frame or a stalled stream.
-
-## Advanced configuration
-
-This section is optional. The root `config.toml` is enough for normal use.
-
-To keep different saved settings for different machines, create a `configs/` folder
-and copy the complete `config.example.toml` into `configs/wsl.local.toml` or
-`configs/gpu.local.toml`. Edit the copy for that machine. Files ending in
-`.local.toml` are Git-ignored, so they are not committed or pushed.
-
-Choose a file explicitly when starting the backend:
-
-```bash
-python run.py backend --config configs/gpu.local.toml
-# Or use the managed backend environment:
-bash server/run_backend.sh --config configs/gpu.local.toml
-```
-
-A selected file replaces root `config.toml`. Missing settings use Python's built-in
-defaults; they do not inherit values from the root file. Copy the complete example
-if you want to start with all its settings.
-
-`HTX_CONFIG` is another way to select a file for the backend and CLI inspection:
-
-```bash
-export HTX_CONFIG=/absolute/path/to/configs/gpu.local.toml
-python run.py backend
-# Optional CLI inspection instead of the tablet:
-python run.py inspect external-camera --no-display --stream
-```
-
-Use `--config` to override `HTX_CONFIG`. Explicit CLI or session options override
-supported TOML settings. Legacy backend path/session-count environment variables
-still override TOML. Model URLs use explicit TOML values, then `.env`, then backend
-local port-file discovery. Authentication tokens stay in `.env` or the environment.
-
-The laptop launcher reads `HTX_CONFIG` for its model choice; an explicit model
-argument wins. The GPU full-service launcher also reads it and forwards it to the
-backend. `QWEN_MODEL` remains an explicit launcher override: keep it consistent with
-`config.toml`. `--host` and `--port` override the backend's server table; `PORT` is
-also supported by `server/run_backend.sh`.
-
-Shared CLI inspection/tablet combined settings include model selection, processing
-width, frame-rate caps, task enable flags, monitor thresholds, snapshot policy and
-stream timeout. YOLOE weights/input size are chosen when the backend initializes
-its shared detectors; restart after changing them. CLI window/save/stream output
-settings apply to CLI output. The tablet retains its authenticated video/result
-transports. Uploaded tablet-camera frames are never saved as snapshots, even when
-`output.snapshots` is true.
-
-## Developer notes and verification
-
-The CLI inspection runner (`apps/fire_safety_inspection.py`) and tablet session
-runner (`backend/combined.py`) share the monitors in `apps/`, the TOML loader and
-video input code. They keep separate output adapters so the tablet retains its
-current annotations, API results and Qwen fallback behavior. TOML configuration
-does not automatically add CLI panels or extra labels to the tablet.
-
-Authenticated `GET /api/sources` reports external-camera availability without
-returning the stream URL or credentials. The tablet creates a combined session
-using the stable `external-camera` source ID. See the
-[API reference](android-api.md) for request and response details and the
-[Android README](../android-app/README.md) for application development.
-
-```bash
-.venv-backend/bin/python -m unittest discover -s tests -p 'test_*.py'
-.venv-backend/bin/python tests/test_core.py
-android-app/gradlew -p android-app testDebugUnitTest assembleDebug assembleDebugAndroidTest lintDebug
-```
-
-Offline checks cover configuration, source discovery/authentication, combined
-results, Qwen fallback, stream cancellation and tablet source switching. Actual
-camera relay operation, GPU inference, latency and device display still need
-verification with the demo equipment.
-
-## Command reference
-
-The remaining sections describe the individual programs and the separate browser
-interface. You do not need these commands to operate the tablet demo. The combined
-CLI inspection (`python run.py inspect`) is covered in the
-[README](../README.md#running). `python run.py` lists all commands, and
-`python run.py <command> -h` shows a command's options. Code lives in `apps/`;
-`python -m apps.<module>` also works. Old script names work as command aliases,
-for example `python run.py exit_monitor IMG_0451.MOV`.
-
-- [Exit monitor](#exit-monitor-python-runpy-exits)
-- [Backend and web app](#backend--web-app-backend-frontend)
-- [Extinguisher monitor](#fire-extinguishers-python-runpy-extinguishers-first-version)
-- [Other runners](#other-runners)
-- [Live camera](#live-camera-dji-osmo-pocket-3)
-- [Tools](#tools)
-
-## Exit monitor: `python run.py exits`
 # Running
 
 Everything you can run, in one place:
 
-1. [**The demo at a venue**](#the-demo-at-a-venue): step by step, from packing to
-   stopping. It covers the camera, the laptop and the tablet.
-2. [**One-time setup**](#one-time-setup): what to do once for the laptop and the camera.
-3. [**Other programs**](#other-programs): each monitor on its own, the backend and web
-   app, the simpler runners, and the tools.
+1. [**What runs where**](#what-runs-where): the backend, and the programs that show its results.
+2. [**The demo at a venue**](#the-demo-at-a-venue): step by step, from packing to stopping, on
+   the dev laptop with the Pocket 3 and the tablet.
+3. [**The backend on a GPU server**](#the-backend-on-a-gpu-server): the same demo, with
+   detection on a separate server.
+4. [**Settings**](#settings-configtoml): `config.toml`, a settings file per machine, and the
+   environment variables.
+5. [**One-time setup**](#one-time-setup): the laptop, the tablet app and the camera.
+6. [**Other programs**](#other-programs): each monitor on its own, the web app, the tablet web
+   page, the simpler runners, the tools and the tests.
 
 Every program starts from `run.py` in the project root. `python run.py` lists the
 commands, and `python run.py <command> -h` shows a command's options. The code is in
@@ -332,26 +20,62 @@ commands, for example `python run.py exit_monitor IMG_0451.MOV`.
 
 Related docs:
 
-- The inspection's settings (`config.toml`, choosing models) are in the
-  [README](../README.md#running).
-- The full camera guide is [live-camera.md](live-camera.md).
-- The API for the tablet app is [android-api.md](android-api.md).
+- The inspection (`python run.py inspect`) and its settings: [README](../README.md#running).
+- The camera: [live-camera.md](live-camera.md).
+- The backend API: [android-api.md](android-api.md).
+- The tablet app, how to build it and how it works inside:
+  [android-app/README.md](../android-app/README.md).
+- The tablet web page: [web-tablet/README.md](../web-tablet/README.md).
+
+---
+
+## What runs where
+
+Detection runs in one place, the **backend** (`python run.py backend`), on the laptop (in
+WSL) or on a GPU server. It runs YOLOE, and uses Qwen when the Qwen server is up. The other
+programs show its results:
+
+| Program | Runs on | Sources | Use it for |
+|---|---|---|---|
+| **Tablet app** (`android-app/`) | the Android tablet | Pre-recorded video, Tablet camera, External camera | the demo: exits and extinguishers on one screen |
+| **Tablet web page** (`web-tablet/`) | any browser | Pre-recorded video, External camera | a fallback when the app has trouble; the same screen |
+| **Web app** (`frontend/`) | any browser | a video file or camera in the browser | development: exits *or* extinguishers, one at a time |
+| **Inspection** (`python run.py inspect`) | the laptop screen | video file, webcam, stream URL | exits and extinguishers with panels. It runs its own models, without the backend. |
+
+**Pre-recorded video** and **External camera** are *server sessions*: the backend reads the
+video or the stream and sends the annotated picture back. **Tablet camera** is a *live
+session*: the tablet sends its frames and draws the returned boxes over its own preview.
+The backend runs one session at a time.
 
 ---
 
 ## The demo at a venue
 
-This runs the demo on the dev laptop at a venue with its own Wi-Fi. The laptop needs
-the [one-time setup](#one-time-setup) first.
+This runs the demo on the dev laptop at a venue with its own Wi-Fi. The laptop and the
+tablet need the [one-time setup](#one-time-setup) first.
 
 **What runs where:**
 
 ```
-Pocket 3 ──Wi-Fi, RTMP──► MediaMTX (Windows, :1935 in, :8554 out) ──► WSL: python run.py inspect
-                                                                         (exits + extinguishers on the laptop screen)
+Pocket 3 ──Wi-Fi, RTMP──► MediaMTX on Windows ──RTSP :8554──┐
+                          (:1935 in, :8554 out)             ▼
 Tablet app ──Wi-Fi──► Windows :8100 ──port forward──► WSL: backend (python run.py backend)
-Qwen3-VL-2B runs in WSL (tmux session "qwen"); both the inspection and the backend use it.
+                                                       └─ YOLOE, and Qwen3-VL-2B in tmux session "qwen"
 ```
+
+The backend reads the camera stream while the tablet shows **External camera**. The
+inspection can show the same stream on the laptop screen
+([step 7](#7-optional-the-inspection-on-the-laptop-screen-wsl-terminal-2)).
+
+**Short version**, once you have done it before:
+
+1. Windows: run the [step 2](#2-open-the-laptop-to-the-network-windows-administrator-powershell)
+   block. It prints the addresses for Mimo and the tablet.
+2. WSL: `bash server/start_laptop.sh` (or ` GPU_UTIL=0.86 MAX_LEN=2048 bash server/start_laptop.sh 4b-fp8`), check the camera URL in `config.toml`, then
+   `python run.py backend` ([step 3](#3-start-qwen-and-the-backend-wsl-terminal-1)).
+3. Windows: start MediaMTX. Phone: start the livestream in Mimo to the printed RTMP address.
+4. Tablet: enter the backend URL and the token in **Settings**, tap **Start demo** and pick
+   a source.
 
 **What changes at a new venue:**
 
@@ -360,14 +84,16 @@ Qwen3-VL-2B runs in WSL (tmux session "qwen"); both the inspection and the backe
 - Windows treats the new network as **Public**. The firewall rules already allow
   Public networks; step 2 checks this.
 
-Step 2 prints every address you need, so you don't have to look anything up.
+Steps 2 and 3 print every address you need, so you don't have to look anything up.
 
 ### Before you leave
 
 - [ ] Charge the camera, the phone with DJI Mimo, and the tablet. Bring the laptop
       charger: on battery the GPU runs slower.
+- [ ] Install the latest tablet app ([Tablet app](#tablet-app-android)). Older builds have no
+      **External camera** option.
 - [ ] In WSL, run `cd ~/htx-demo && conda activate htx && python tests/test_core.py`. It
-      should print `16/16 passed`.
+      should print `17/17 passed`.
 - [ ] Download every model you plan to show, while you still have fast internet:
   - Qwen: `bash server/start_laptop.sh 2b` (the default). Also run it with `2b-fp8` if
     you want to show that one; each first start downloads the model.
@@ -377,7 +103,8 @@ Step 2 prints every address you need, so you don't have to look anything up.
 - [ ] Bring a backup network: a travel router, or a hotspot on a second phone. Venue
       Wi-Fi often blocks devices from reaching each other, or needs a login page that
       the camera can't use.
-- [ ] Optional: copy a recorded video to `~/htx-demo` as a fallback if the camera
+- [ ] Copy one or two recorded videos to `~/htx-demo`, the backend's `[server] video_dir`.
+      The tablet lists them under **Pre-recorded video**, the fallback if the camera
       fails.
 
 ### 1. Join the Wi-Fi and check it is usable
@@ -397,14 +124,17 @@ Open **PowerShell as Administrator** and paste this block. It is safe to run aga
 you must run it again after every reboot, because WSL's internal address changes.
 
 ```powershell
-$port = 8100
-$wsl  = (wsl hostname -I).Trim().Split(' ')[0]          # WSL's internal IP (changes after a reboot)
-netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>&1 | Out-Null
-netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=$port connectaddress=$wsl connectport=$port
-if (-not (Get-NetFirewallRule -DisplayName "htx backend 8100" -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName "htx backend 8100" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port | Out-Null
+$wsl = (wsl hostname -I).Trim().Split(' ')[0]           # WSL's internal IP (changes after a reboot)
+function Open-WslPort($port, $name) {                     # forward a Wi-Fi port to WSL, let the local subnet in
+    netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>&1 | Out-Null
+    netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=$port connectaddress=$wsl connectport=$port
+    if (-not (Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port | Out-Null
+    }
+    Set-NetFirewallRule -DisplayName $name -Profile Private,Public -RemoteAddress LocalSubnet
 }
-Set-NetFirewallRule -DisplayName "htx backend 8100" -Profile Private,Public -RemoteAddress LocalSubnet
+Open-WslPort 8100 "htx backend 8100"                      # the backend
+Open-WslPort 5174 "htx web page 5174"                     # the tablet web page (fallback)
 if (-not (Get-NetFirewallRule -DisplayName "MediaMTX" -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -DisplayName "MediaMTX" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 1935,8554 | Out-Null
 }
@@ -412,27 +142,36 @@ $ip = (Get-NetIPAddress -InterfaceAlias "Wi-Fi" -AddressFamily IPv4).IPAddress
 ""
 "Laptop Wi-Fi IP       : $ip"
 "DJI Mimo RTMP address : rtmp://${ip}:1935/live/x2"
-"Tablet app backend URL: http://${ip}:${port}"
-"Tablet browser check  : http://${ip}:${port}/api/health"
+"Tablet app backend URL: http://${ip}:8100"
+"Tablet browser check  : http://${ip}:8100/api/health"
+"Tablet web page       : http://${ip}:5174"
 ```
 
-Keep the four printed lines visible; the next steps use them. The block:
+Keep the five printed lines visible; the next steps use them. The block:
 
-- forwards port 8100 on the Wi-Fi to the backend in WSL (the tablet can't reach WSL
-  directly);
-- lets devices on the same Wi-Fi, and only them, through the firewall on port 8100 and
-  on the MediaMTX ports 1935 and 8554.
+- forwards two ports on the Wi-Fi into WSL: 8100 to the backend, and 5174 to the
+  [tablet web page](#if-the-tablet-app-fails-the-tablet-web-page). WSL is behind NAT, so
+  the tablet reaches only the ports Windows forwards. The laptop's own browser reaches
+  WSL through `localhost` without a forward, so a page that works on the laptop can
+  still fail on the tablet;
+- lets devices on the same Wi-Fi, and only them, through the firewall on ports 8100 and
+  5174, and on the MediaMTX ports 1935 and 8554.
 
-The backend still needs the token, so others on the venue Wi-Fi can't use it.
+The backend still needs the token, so others on the venue Wi-Fi can't use it. The web
+page is static files and holds no token.
 
 ### 3. Start Qwen and the backend (WSL terminal 1)
 
 ```bash
 conda activate htx && cd ~/htx-demo
 bash server/start_laptop.sh       # Qwen; wait for "Qwen is up" (about 1 min) or "already running"
+echo rtsp://$(ip route show default | awk '{print $3}'):8554/live/x2   # the camera URL as WSL sees it
 python run.py backend             # leave it running
 ```
 
+- **Before you start the backend,** check that `[sources.external_camera] url` in
+  `config.toml` is the printed camera URL. Its address is Windows as seen from WSL, and it
+  can change after a reboot. The backend reads `config.toml` only when it starts.
 - The backend must say **port 8100**. If it says 8101 or higher, an old backend is
   still running: stop it with `pkill -f "run.py backend"` and start this one again. The
   port forward only covers 8100.
@@ -459,8 +198,10 @@ Run `C:\mediamtx\mediamtx.exe` from its own folder. Its log should say
 5. Set the streaming address to the **DJI Mimo RTMP address** printed in step 2, for
    example `rtmp://192.168.50.22:1935/live/x2`.
    - There is no stream key.
-   - Keep the path exactly `live/x2`, because the WSL commands use the same name.
-   - Don't use the WSL `$WIN` address here.
+   - Keep the path exactly `live/x2`, because the camera URL in `config.toml` uses the
+     same name.
+   - Don't use the camera URL from step 3 here; that address only works inside the
+     laptop.
 6. Optionally, swipe for more settings and lower the quality. A lower resolution or
    bitrate can cut the delay.
 7. Tap **Start Livestream**. On iPhone, allow Local Network access if asked.
@@ -477,17 +218,28 @@ versions.
 2. In the tablet's browser, open the **Tablet browser check** URL from step 2. It must
    show `{"ok":true,"auth_required":true}`. If it times out, see
    [If something goes wrong](#if-something-goes-wrong).
-3. In the app, enter the **Tablet app backend URL** and the token.
-4. To show the **Pocket 3's** picture on the tablet (session mode), the app also needs
-   the camera stream's address as the backend sees it. Print it in WSL with
-   `echo rtsp://$(ip route show default | awk '{print $3}'):8554/live/x2`.
-   - Session mode shows exits only.
-   - With the tablet's own camera (live mode), the app needs no address; it can show
-     exits or extinguishers.
+3. In the app, tap **Settings**, enter the **Tablet app backend URL** from step 2 and the
+   token, and tap **Save**. The app remembers both.
+4. Tap **Start demo** (later: **Change source**) and pick a source:
 
-The backend runs one tablet session at a time.
+| Source | What the tablet shows | Needs |
+|---|---|---|
+| **External camera** | the Pocket 3, annotated by the backend | the camera URL in `config.toml` (step 3), MediaMTX (step 4), the camera streaming (step 5) |
+| **Tablet camera** | its rear camera, with the boxes drawn over the preview | camera permission, asked the first time |
+| **Pre-recorded video** | a video from the backend's `[server] video_dir`, in a loop | a video file in that folder |
 
-### 7. Run the inspection on the laptop screen (WSL terminal 2)
+All three show exits and extinguishers together, with the same labels and colors. Without
+Qwen, detection goes on, and extinguisher dates show as not verified.
+
+- The backend runs one session at a time. Switching source stops this tablet's own
+  session first; it never stops another device's.
+- The backend records every **External camera** and **Tablet camera** session; see
+  [Recordings](#recordings).
+
+### 7. Optional: the inspection on the laptop screen (WSL terminal 2)
+
+The tablet demo doesn't need this. It shows the Pocket 3 on the laptop screen, with an
+exit panel and an extinguisher panel:
 
 ```bash
 conda activate htx && cd ~/htx-demo
@@ -496,23 +248,49 @@ python run.py camera-check rtsp://$WIN:8554/live/x2                   # optional
 python run.py inspect rtsp://$WIN:8554/live/x2 --save results/venue_$(date +%H%M).mp4
 ```
 
-- The window shows the original next to the annotated video, with an exit panel and an
-  extinguisher panel. Keys: `q` quits, `space` pauses.
+- The window shows the original next to the annotated video. Keys: `q` quits, `space`
+  pauses.
 - Reports go to `results/fire_safety_live/`.
 - Settings such as frame rates, resolution and models are in `config.toml`; see the
   [README](../README.md#running).
 - **Fallback without the camera:** `python run.py inspect <video file> --loop`.
-- The inspection and one tablet session can run at the same time. Tested on a recorded
-  video: the tablet's round trip stayed at about 30 ms, and the inspection ran at about
-  40 ms per frame.
+- The inspection loads its own YOLOE models next to the backend's. With Qwen-2B, both ran
+  at the same time on a recorded video: the tablet's round trip stayed at about 30 ms, and
+  the inspection ran at about 40 ms per frame.
+
+### If the tablet app fails: the tablet web page
+
+The [tablet web page](#tablet-web-page-web-tablet) shows the app's screen in a browser, for
+**External camera** and **Pre-recorded video** (it has no tablet camera). If the app's
+session is still running, the page joins it as a second viewer, so detection doesn't
+restart. Start it in WSL terminal 3:
+
+```bash
+conda activate htx && cd ~/htx-demo
+python web-tablet/serve.py        # port 5174; leave it running
+```
+
+- **On the laptop:** open `http://localhost:5174` in a Windows browser. In **Settings**,
+  enter `http://localhost:8100` and the token.
+- **On the tablet or a phone:** open the **Tablet web page** URL printed in step 2. In
+  **Settings**, enter the **Tablet app backend URL** from step 2 and the token. Don't use
+  `localhost:8100` here: on the tablet, `localhost` is the tablet itself.
+  - Step 2 forwards port 5174 from the Wi-Fi to WSL. If the page opens on the laptop but
+    times out on the tablet, run the step 2 block again.
+- To join the app's session, pick the **same source** (for a video, the same file). While
+  that session runs, other sources are refused: stop it in the app first. If the app was
+  on **Tablet camera**, stop it there too, because the backend has no picture of it to
+  show.
+- Closing the page leaves the session running on the backend.
 
 ### Stopping
 
-1. Press `q` in the inspection window.
+1. Press `q` in the inspection window, if it runs.
 2. Press `Ctrl+C` in the backend terminal. This also finishes the session recordings in
-   `results/recordings/`.
-3. Stop the livestream in Mimo, close MediaMTX, and turn off the camera.
-4. Free the GPU: `bash server/stop_all.sh qwen`.
+   `results/recordings/` ([Recordings](#recordings)).
+3. Press `Ctrl+C` in the web page's terminal, if it runs.
+4. Stop the livestream in Mimo, close MediaMTX, and turn off the camera.
+5. Free the GPU: `bash server/stop_all.sh qwen`.
 
 The port forward and firewall rules can stay; they only let in devices on the same
 network, and only on the demo ports.
@@ -523,12 +301,20 @@ network, and only on the demo ports.
 |---|---|
 | Tablet: **connection timed out** | (1) The laptop was rebooted, or WSL restarted, since step 2: run the step 2 block again. (2) The tablet is on another network: its IP must start like the laptop's (e.g. `192.168.50.x`). (3) The Wi-Fi blocks devices from reaching each other: switch to your backup network. |
 | Tablet: **connection refused** | The backend isn't running, or it runs on another port than 8100 (step 3). |
-| Tablet: **401** or WebSocket closed at once | Wrong token. Check it with `grep BACKEND_TOKEN ~/htx-demo/.env`. |
-| Tablet: **already running … stop it first** | The backend runs one tablet session at a time. Close the session in the app, or restart the backend. |
+| Tablet: **401**, or the WebSocket closes at once | Wrong token. Check it with `grep BACKEND_TOKEN ~/htx-demo/.env`. |
+| Tablet: **already running**, or the backend is in use by another device | The backend runs one session at a time. Stop it on the device that started it (putting the app in the background doesn't stop a **Pre-recorded video** session), or restart the backend. |
+| Tablet: **External camera is not configured** | `[sources.external_camera] url` in `config.toml` is empty. Set it (step 3) and restart the backend. |
+| Tablet: **External camera** shows no picture | MediaMTX isn't running, or the camera isn't publishing: the MediaMTX log must show `is publishing to path 'live/x2'`. In WSL, `python run.py camera-check <the URL from config.toml>` must show the picture. The session ends after 30 s without frames (`[input] stream_timeout`); fix the stream, then pick the source again. During a short outage, the last picture stays on screen. |
+| Tablet: no **External camera** option | Install the latest app. |
+| Web page: opens on the laptop (`localhost:5174`) but times out on the tablet or a phone | Port 5174 isn't forwarded into WSL. The laptop reaches WSL through `localhost`; other devices reach only the ports Windows forwards. Run the step 2 block again (older copies of it forwarded only 8100). To check, run `netsh interface portproxy show v4tov4` in PowerShell: it must list 8100 and 5174, both to the address that `wsl hostname -I` prints. |
+| Web page: opens on the tablet, but can't connect to the backend | **Settings** has `http://localhost:8100`, which on the tablet means the tablet. Enter the **Tablet app backend URL** from step 2. |
+| Tablet: no videos under **Pre-recorded video** | Put video files (`.mov`, `.mp4`, `.mkv`, …) directly in `[server] video_dir` (`~/htx-demo`); subfolders aren't listed. |
+| Tablet: **Qwen assistance unavailable** | Detection goes on without Qwen. Qwen isn't running, or it serves another model than `[models] qwen_model`. Run `bash server/status.sh`, then `bash server/start_laptop.sh`. The tablet checks for Qwen when a session starts, so change source afterwards. |
+| A `config.toml` change has no effect | Restart the backend. It reads the file only when it starts. |
 | Mimo **can't find the camera** | Check that the phone's Wi-Fi and Bluetooth are both on and that Mimo is up to date. A DJI Mic 2 on 2.4 GHz blocks Mimo: switch the camera to 5.8 GHz under Wireless Connection, or disconnect the mic. |
 | Mimo: **Livestream failed**, or nothing in the MediaMTX log | The RTMP address must be the **Wi-Fi IP printed in step 2** (it changes per venue), not the WSL address. The camera must be on the same Wi-Fi. A login page also blocks the camera: use the backup network. If the firewall rule for TCP 1935 is missing, run the step 2 block again. |
-| Inspection: **`method DESCRIBE failed: 404 (Not Found)`**, then **No frames from rtsp://… after 30 s** | MediaMTX is reachable, but the camera isn't publishing to `live/x2`; its log shows no `is publishing to path` line. Usually Mimo still has an old address: the Wi-Fi IP changes with every network, including when you switch to a phone hotspot. Run the step 2 block again and put the new **DJI Mimo RTMP address** into Mimo. The inspection retries for 30 s, so it picks up the stream if you fix it in time. |
-| Inspection: **No frames from rtsp://… after 30 s**, without a 404 | MediaMTX isn't running. In WSL, use `$WIN` (step 7), not the Wi-Fi IP. |
+| Inspection or backend log: **`method DESCRIBE failed: 404 (Not Found)`**, then **No frames from rtsp://… after 30 s** | MediaMTX is reachable, but the camera isn't publishing to `live/x2`; its log shows no `is publishing to path` line. Usually Mimo still has an old address: the Wi-Fi IP changes with every network, including when you switch to a phone hotspot. Run the step 2 block again and put the new **DJI Mimo RTMP address** into Mimo. The stream reader retries for 30 s, so it picks up the stream if you fix it in time. |
+| Inspection or backend log: **No frames from rtsp://… after 30 s**, without a 404 | MediaMTX isn't running. In WSL, use the step 3 address (`$WIN` in step 7), not the Wi-Fi IP. |
 | Inspection or backend: **Cannot reach Qwen** | Run `bash server/status.sh`, then `bash server/start_laptop.sh`. |
 | **Qwen doesn't come up on a network without internet** | The models are on the laptop, but Qwen may wait on Hugging Face. Start it with `bash server/stop_all.sh qwen` and then `HF_HUB_OFFLINE=1 bash server/start_laptop.sh`. This only works when no other tmux session is open: Qwen runs in tmux, and otherwise it won't see the setting. |
 | Frequent "stream lost — reconnecting" | Weak Wi-Fi, the phone went to sleep, or the camera is hot or low on battery. Runs reconnect by themselves and end only after 30 s without frames. |
@@ -536,7 +322,8 @@ network, and only on the demo ports.
 ### Notes
 
 - **The two IPs are easy to mix up.** Mimo and the tablet use the laptop's **Wi-Fi IP**
-  (printed in step 2). Commands in WSL use **`$WIN`**, Windows as seen from inside WSL.
+  (printed in step 2). `config.toml` and the commands in WSL use Windows as seen from
+  inside WSL (printed in step 3, `$WIN` in step 7).
 - **Only YOLOE and Qwen run here.** LocateAnything doesn't fit in the laptop's 8 GB GPU,
   so the demo runs YOLOE + Qwen3-VL-2B.
 - **Watch the verdicts.** Qwen-2B is the weakest Qwen model. On a drawn test scene, its
@@ -548,6 +335,92 @@ network, and only on the demo ports.
   - The combined inspection hasn't run on the camera yet.
   - To measure the camera's delay, use `python run.py camera-check --clock` (see
     [live-camera.md](live-camera.md)).
+
+---
+
+## The backend on a GPU server
+
+The tablet doesn't care where the backend runs. On a Linux server with a 24 GB-class GPU,
+one script sets up and starts Qwen, LocateAnything and the backend:
+
+```bash
+bash server/start_all.sh          # each in its own tmux session; prints the backend port and token
+bash server/status.sh             # what is running
+bash server/stop_all.sh [name]    # stop everything, or one of qwen / locate / backend
+```
+
+- The first run creates three Python environments and downloads the weights, which takes
+  about 20–30 minutes. Later runs start in 1–2 minutes.
+- It serves `[models] qwen_model` from `config.toml`, or `4b` when that is empty.
+  `QWEN_MODEL=8b-fp8 bash server/start_all.sh` overrides it. Don't use it on the 8 GB
+  laptop, which fits neither 4B nor LocateAnything.
+- When the model servers are already running, `bash server/run_backend.sh` starts only the
+  backend, in its own environment (`~/exit-monitor`). `python run.py backend` works too, in
+  an environment you activated yourself.
+- The backend takes port 8100, or the next free one, and prints it. On the tablet, enter
+  `http://<server-ip>:<printed port>`.
+- **External camera:** the backend reads the stream itself, so
+  `[sources.external_camera] url` must be reachable *from the server*. A MediaMTX on the
+  laptop usually isn't.
+- For model servers on another machine, set their addresses (`[models] qwen_url` /
+  `locate_url`, or `.env`) and start them there.
+
+---
+
+## Settings: `config.toml`
+
+The backend and the inspection read the root `config.toml` when they start, so restart the
+backend after a change. The [README](../README.md#settings-configtoml) explains the
+inspection's settings (frame rates, thresholds, output). For the tablet demo, these matter:
+
+| Setting | What to enter |
+|---|---|
+| `[sources.external_camera] url` | The camera stream as the **backend** reaches it, e.g. `rtsp://<windows-host>:8554/live/x2` on the laptop ([step 3](#3-start-qwen-and-the-backend-wsl-terminal-1)). Empty: the tablet reports **External camera is not configured**. The tablet never sees this URL. The inspection takes it as source `external-camera` (`python run.py inspect external-camera`). |
+| `[models] qwen_url` | `""` (default) uses `QWEN_URL` from `.env`, which is `http://localhost:8000/v1` on the laptop. |
+| `[models] qwen_model` | The model the Qwen server serves, e.g. `2b`; `""` accepts whichever it serves. If they differ, the tablet runs without Qwen. Changing it doesn't switch the server: run `bash server/start_laptop.sh` again, which serves the model named here. |
+| `[models] yoloe_model` | `11s` (default). Restart the backend after changing it. |
+| `[models] locate_anything` | The tablet always asks for it off; it matters for the web app and the inspection. With no URL, it is off anyway. |
+| `[processing] process_fps` | Frames per second the backend analyses in each tablet session (`0` = as many as it keeps up with). The inspection uses it too. |
+| `[server] port`, `host` | `8100`, on all interfaces. If 8100 is busy, the backend takes the next free port. |
+| `[server] video_dir` | The folder listed under **Pre-recorded video**; `.` is the project root. Subfolders aren't listed. |
+| `[server] max_sessions` | Sessions at the same time, live ones included: `1` (one GPU pipeline). |
+| `[server] record`, `record_fps` | `true` (default) records every camera / stream session ([Recordings](#recordings)). `record_fps` is the videos' frame rate (15). |
+
+`localhost` in these settings means the backend's own computer. Edit the sections that are
+already in the file; a second copy of a section makes the file invalid.
+
+### A settings file per machine
+
+To keep settings for several machines, copy the whole `config.example.toml` to
+`configs/<machine>.local.toml` (files ending in `.local.toml` are git-ignored), and start
+with it:
+
+```bash
+python run.py backend --config configs/gpu.local.toml
+bash server/run_backend.sh --config configs/gpu.local.toml
+python run.py inspect --config configs/gpu.local.toml
+export HTX_CONFIG=$PWD/configs/gpu.local.toml      # the same, for everything started from this shell
+```
+
+- The file **replaces** `config.toml`: settings it leaves out get the built-in defaults,
+  not the values in `config.toml`.
+- `--config` wins over `HTX_CONFIG`. `server/start_laptop.sh` and `server/start_all.sh`
+  read `HTX_CONFIG` for the Qwen model; a model argument or `QWEN_MODEL` wins over it.
+- `--host` and `--port` override `[server]`; `server/run_backend.sh` also takes `PORT`.
+
+### Environment variables
+
+Secrets stay out of `config.toml`: put them in `.env` (git-ignored) or in the environment.
+The backend also reads these; the ones that name a setting override it.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BACKEND_TOKEN` | *(none)* | shared secret: `Authorization: Bearer <token>` or `?token=`. **Set it.** |
+| `BACKEND_CORS_ORIGINS` | `*` | origins allowed to call the API, e.g. `http://localhost:5173` |
+| `BACKEND_VIDEO_DIR` | `[server] video_dir` | where session videos are read from |
+| `BACKEND_MAX_SESSIONS` | `[server] max_sessions` | sessions at the same time, live ones included |
+| `BACKEND_OUT_DIR` | `[output] out_dir` (`results`) | reports, snapshots and recordings |
+| `QWEN_URL`, `LOCATE_URL` | the model servers' port files | model servers, when `[models] qwen_url` / `locate_url` are empty |
 
 ---
 
@@ -563,12 +436,31 @@ The dev laptop already has all of this. For another laptop, start with the READM
 2. **Backend packages**, if `python run.py backend` reports a missing `fastapi`:
    `pip install "fastapi==0.121.3" "uvicorn[standard]==0.38.0"` (both are in
    `requirements.txt`).
-3. **Backend token:**
+3. **`.env` and the backend token:** copy `.env.sample` to `.env` if there is none, then run
    `echo "BACKEND_TOKEN=$(python -c 'import secrets; print(secrets.token_hex(16))')" >> .env`.
-   The tablet app needs it.
+   The tablet app needs the token.
 4. **Port forward and firewall rules:** the block in [step 2](#2-open-the-laptop-to-the-network-windows-administrator-powershell)
    creates them.
 5. **Models:** see [Before you leave](#before-you-leave).
+
+### Tablet app (Android)
+
+1. **Build and install the app.** Building needs JDK 17 and the Android SDK; the steps are
+   in the app's [developer setup](../android-app/README.md#developer-setup). With a built
+   APK and `adb`:
+
+   ```bash
+   adb install -r android-app/app/build/outputs/apk/debug/app-debug.apk
+   ```
+
+   Install it again after every app update. A backend update only needs a backend restart.
+2. **Enter the backend** in the app's **Settings** at the venue
+   ([step 6](#6-connect-the-tablet)). The app keeps the URL and the token (encrypted)
+   between launches.
+
+For development, the tablet can also reach the backend over USB: run
+`adb reverse tcp:8100 tcp:8100` and use `http://127.0.0.1:8100`. The Android emulator
+reaches the computer at `http://10.0.2.2:8100`.
 
 ### Camera and DJI Mimo
 
@@ -642,11 +534,12 @@ snapshot per exit, all events) and `exit<id>_<time>_<status>.jpg` snapshots.
 
 ### Backend + web app (`backend/`, `frontend/`)
 
-The detection pipeline runs as a **FastAPI service on the WSL laptop or GPU server**
-(API only). The web app is hosted **separately** and connects with the backend address
-and token. The Android tablet uses the same backend and supports combined exit and
-extinguisher detection; see [Choose a source](#5-choose-a-source-on-the-tablet).
-The browser controls below describe the separate web interface.
+The backend (`python run.py backend`, the same as `python -m backend`) is a FastAPI service,
+API only. Its clients are the tablet app, the [tablet web page](#tablet-web-page-web-tablet)
+and the web app in `frontend/`, which this section describes. The web app runs one task at
+a time, exits or extinguishers, on a video or a camera in the browser. To run the backend
+on a server, see [The backend on a GPU server](#the-backend-on-a-gpu-server); for its
+settings, see [Settings](#settings-configtoml).
 
 **Live mode (default).** The video plays **in the browser**, from a local file or the
 camera. The web app sends small JPEG frames (960 px wide) to the server over one
@@ -661,15 +554,20 @@ Browser:     video ─► JPEG frames ──WS /api/live──►  GPU server: b
              boxes ◄── JSON (boxes, statuses) ◄──     └─ YOLOE + LocateAnything + Qwen
 ```
 
-**Recordings.** The backend saves each camera / stream session (live mode, or a server
-session from a stream URL or the external camera) as `results/recordings/<session>_original.mkv`
-and `<session>_annotated.mkv`; see `[server] record` in `config.toml`. The videos play in
-real time at `record_fps`. Replay the original through the pipeline with
-`python run.py inspect results/recordings/<session>_original.mkv`.
+#### Recordings
 
-**On the server:** run `bash server/start_all.sh`. It starts Qwen, LocateAnything and
-the backend, and prints the backend port and token. To start only the backend, run
-`bash server/run_backend.sh`.
+The backend saves every live session (the tablet camera, and whatever the web app sends),
+and every server session from a stream URL or the external camera, as two videos in
+`results/recordings/`:
+
+- `<session>_original.mkv`: the frames the backend analysed;
+- `<session>_annotated.mkv`: the same frames with the boxes and statuses.
+
+Server sessions that play a video file aren't recorded. The videos play in real time at
+`[server] record_fps`; `[server] record = false` turns recording off. They play in VLC. To
+replay one through the pipeline, run
+`python run.py inspect results/recordings/<session>_original.mkv`. Nothing deletes old
+recordings.
 
 **Host the web app** on any machine with Python 3 (it is static files only):
 
@@ -724,28 +622,34 @@ Notes:
 - **Unreachable port:** if the server port can't be reached from your computer, tunnel it with
   `ssh -L 8100:localhost:8100 <user>@<server>` and use `http://localhost:8100`.
 
-**Server-side sessions.** This is the path used by the tablet for recorded videos
-and the external camera. The server reads a video file or camera stream and sends
-annotated MJPEG frames back (`/api/sessions…` in the [API reference](android-api.md#rest-endpoints)). It is useful for
-recording and reports, but it lags over a slow link.
+**Server-side sessions.** The tablet uses these for **Pre-recorded video** and **External
+camera**. The server reads a video file or camera stream and sends annotated MJPEG frames
+back (`/api/sessions…` in the [API reference](android-api.md#rest-endpoints)). They are
+useful for recording and reports, but they lag over a slow link.
 
 **Building your own app** (Android, another web app, a script): the full API, with
 request and response examples, is in [Backend API reference](android-api.md).
 
-| Legacy environment setting | Default if not configured in TOML | Meaning |
-|---|---|---|
-| `BACKEND_TOKEN` | *(none)* | shared secret: `Authorization: Bearer <token>` or `?token=` — **set it** |
-| `BACKEND_CORS_ORIGINS` | `*` | origins allowed to call the API, e.g. `http://localhost:5173` |
-| `BACKEND_VIDEO_DIR` | repo root | where session videos are read from |
-| `BACKEND_MAX_SESSIONS` | `1` | concurrent sessions, live ones included (one GPU pipeline) |
-| `LOCATE_URL`, `QWEN_URL` | from the port files | model endpoints when explicit TOML URLs are empty |
-
-For the tablet backend and combined CLI inspection, use root `config.toml` as
-described above. These environment variables remain supported; see
-[Advanced configuration](#advanced-configuration).
-
 `python run.py exits --stream` still works for quick checks: an all-in-one browser view
 (`/stream`), plus `/stream/original`, `/stream/annotated` and `/state`.
+
+### Tablet web page (`web-tablet/`)
+
+The tablet app's screen in a browser, for **Pre-recorded video** and **External camera**.
+It is static files, with no build step:
+
+```bash
+python web-tablet/serve.py [--port 5174]   # open http://localhost:5174, or http://<this computer's IP>:5174
+```
+
+In **Settings**, enter the backend's URL (the backend's own port, not 5174) and the token.
+The page talks to the backend directly, so the browser must reach both. When `serve.py`
+and the backend run in WSL, other devices reach them only through a Windows port forward
+for each port; the [step 2](#2-open-the-laptop-to-the-network-windows-administrator-powershell)
+block sets up both. Picking the source
+that a running session already shows joins that session as a viewer. At a venue, see
+[If the tablet app fails](#if-the-tablet-app-fails-the-tablet-web-page). Details:
+[web-tablet/README.md](../web-tablet/README.md).
 
 ### Fire extinguishers: `python run.py extinguishers` (first version)
 
@@ -856,7 +760,21 @@ and troubleshooting are in **[docs/live-camera.md](live-camera.md)**.
 python run.py camera-check rtsp://<host>:8554/live/x2 --clock   # camera link check, no models
 python run.py bench IMG_0450.MOV --provider local --sizes 448 640 --concurrency 1 4 8
 python run.py locate-test IMG_0450.MOV --url http://<srv>:8020 --mode fast
-python tests/test_core.py
 bash server/run_realtime_test.sh IMG_0450.MOV   # on the server: benchmark + live run + verdict
 bash server/watch_live.sh IMG_0450.MOV          # on the server: live_infer → browser
 ```
+
+### Tests
+
+None of these needs a GPU, a model server or a camera:
+
+```bash
+python tests/test_core.py                               # core logic; expect 17/17 passed
+python -m unittest discover -s tests -p 'test_*.py'     # backend: sessions, live mode, Qwen fallback, recordings
+node --test web-tablet/tests/*.test.mjs                 # tablet web page (Node.js 18+)
+android-app/gradlew -p android-app testDebugUnitTest assembleDebug assembleDebugAndroidTest lintDebug   # tablet app (JDK 17, Android SDK)
+```
+
+They don't cover the camera relay, GPU inference, latency or what the tablet shows: check
+those with the demo equipment. The app's on-device camera test is in
+[android-app/README.md](../android-app/README.md#validation--selectable-sources).

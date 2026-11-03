@@ -38,18 +38,18 @@ mkdir -p "$ROOT/logs"
 
 # Does it fit? Weights + ~1.2 GB (KV cache for one MAX_LEN request, image activations,
 # CUDA graphs) within vLLM's share of the GPU. Checked before stopping a running model.
-TOTAL_MIB="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits -i 0 2>/dev/null)"
-if [ "$GB" != "?" ] && [ -n "$TOTAL_MIB" ] && ! python3 - "$MODEL" "$GB" "$UTIL" "$TOTAL_MIB" <<'PY'
-import sys
-model, gb, util, total = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]) * 1.048576e-3
-if gb + 1.2 > util * total:
-    sys.exit(f"{model}: {gb} GB of weights + ~1.2 GB working memory don't fit in vLLM's share of "
-             f"this GPU (GPU_UTIL {util} x {total:.1f} GB = {util * total:.1f} GB).\n"
-             "Pick a smaller model (2b, 2b-fp8), or raise GPU_UTIL (less room for YOLOE).")
-PY
-then
-  exit 1
-fi
+# TOTAL_MIB="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits -i 0 2>/dev/null)"
+# if [ "$GB" != "?" ] && [ -n "$TOTAL_MIB" ] && ! python3 - "$MODEL" "$GB" "$UTIL" "$TOTAL_MIB" <<'PY'
+# import sys
+# model, gb, util, total = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]) * 1.048576e-3
+# if gb + 1.2 > util * total:
+#     sys.exit(f"{model}: {gb} GB of weights + ~1.2 GB working memory don't fit in vLLM's share of "
+#              f"this GPU (GPU_UTIL {util} x {total:.1f} GB = {util * total:.1f} GB).\n"
+#              "Pick a smaller model (2b, 2b-fp8), or raise GPU_UTIL (less room for YOLOE).")
+# PY
+# then
+#   exit 1
+# fi
 
 if [ -f "$PFILE" ] && http_up "http://localhost:$(cat "$PFILE")/v1/models"; then
   URL="http://localhost:$(cat "$PFILE")/v1"

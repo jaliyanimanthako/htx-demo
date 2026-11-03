@@ -51,6 +51,16 @@ from engines.qwen_engine import QwenEngine
 from apps.exit_monitor import Tracker   # shared IoU tracker with camera-motion compensation
 
 EXT_CLASSES = ["fire extinguisher"]
+# Close up (a large or cut-off cylinder) YOLOE's "fire extinguisher" stops firing (IMG_0456:
+# 1 of 42 close frames); this prompt finds them. Kept only for large boxes, where it is
+# reliable (a small one hit a bottle in IMG_0451), and dropped where a "fire extinguisher"
+# box already covers the same object.
+CLOSE_CLASSES = ["red cylinder with a label"]
+CLOSE_MIN_H = 0.25   # fraction of the frame height
+# When YOLOE loses a confirmed extinguisher anyway (close up, partly out of the frame), its
+# box follows the image motion inside it (follow_box) for at most this long.
+FOLLOW_MAX_S = 4.0
+FOLLOW_MIN_POINTS = 12
 # similar-looking things YOLOE should label as something else
 DECOY_CLASSES = ["fire hose reel", "fire alarm", "red bag", "water bottle", "red trash can"]
 STATUS_BGR = {"reading": (160, 160, 160), "valid": (0, 200, 0), "expiring_soon": (0, 200, 255),
@@ -72,6 +82,36 @@ def crop_around(frame, box, side=0.35, top=0.25, bottom=0.15):
     return frame[c:d, a:b].copy()
 
 
+def follow_box(prev_gray, gray, box):
+    """
+    Where `box` (in prev_gray) is in `gray`: corner points inside its visible part are
+    followed with optical flow and fitted with move + zoom, so the box keeps up when
+    walking towards the extinguisher, also once part of it is out of the frame (the box
+    may then extend past the edge). None when too few points agree.
+    """
+    H, W = gray.shape
+    x0, y0, x1, y1 = max(0, int(box[0])), max(0, int(box[1])), min(W, int(box[2])), min(H, int(box[3]))
+    if x1 - x0 < 16 or y1 - y0 < 16:
+        return None
+    mask = np.zeros_like(prev_gray)
+    mask[y0:y1, x0:x1] = 255
+    p0 = cv2.goodFeaturesToTrack(prev_gray, 150, 0.01, 5, mask=mask)
+    if p0 is None or len(p0) < FOLLOW_MIN_POINTS:
+        return None
+    p1, ok, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, p0, None, winSize=(21, 21), maxLevel=3)
+    ok = ok.ravel() == 1
+    if ok.sum() < FOLLOW_MIN_POINTS:
+        return None
+    A, inliers = cv2.estimateAffinePartial2D(p0[ok], p1[ok], method=cv2.RANSAC, ransacReprojThreshold=3.0)
+    if A is None or inliers.sum() < max(FOLLOW_MIN_POINTS, 0.5 * ok.sum()):
+        return None
+    if not 0.8 < float(np.hypot(A[0, 0], A[1, 0])) < 1.25:     # zoom per frame
+        return None
+    corners = np.float32([[box[0], box[1]], [box[2], box[1]], [box[0], box[3]], [box[2], box[3]]])
+    c = corners @ A[:, :2].T + A[:, 2]
+    return [float(c[:, 0].min()), float(c[:, 1].min()), float(c[:, 0].max()), float(c[:, 1].max())]
+
+
 def sharpness(crop) -> float:
     g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     g = cv2.resize(g, (max(1, int(g.shape[1] * 256 / g.shape[0])), 256))
@@ -90,7 +130,7 @@ class ExtinguisherDetector:
     def __init__(self, model_name: str, conf: float = 0.3, imgsz: int = 640):
         from apps import yoloe_infer as Y
         from ultralytics import YOLOE
-        self.names = EXT_CLASSES + DECOY_CLASSES
+        self.names = EXT_CLASSES + CLOSE_CLASSES + DECOY_CLASSES
         self.conf, self.imgsz, self.model_name = conf, imgsz, model_name
         self.device = Y._pick_device()
         print(f"  Loading YOLOE {model_name} on {self.device} ...")
@@ -101,10 +141,18 @@ class ExtinguisherDetector:
     def __call__(self, frame) -> list:
         r = self.model.predict(frame, conf=self.conf, imgsz=self.imgsz,
                                device=self.device, verbose=False)[0]
-        return [{"kind": "extinguisher", "label": "fire extinguisher", "box": xyxy, "conf": c}
-                for xyxy, cls, c in zip(r.boxes.xyxy.tolist(), r.boxes.cls.int().tolist(),
-                                        r.boxes.conf.tolist())
-                if self.names[cls] in EXT_CLASSES]
+        found = list(zip(r.boxes.xyxy.tolist(), r.boxes.cls.int().tolist(), r.boxes.conf.tolist()))
+        exts = [(b, c) for b, cls, c in found if self.names[cls] in EXT_CLASSES]
+        min_h = CLOSE_MIN_H * frame.shape[0]
+        close = [(b, c) for b, cls, c in found
+                 if self.names[cls] in CLOSE_CLASSES and b[3] - b[1] >= min_h]
+        # largest first: up close it can also box a strip of the same cylinder, nested inside
+        for b, c in sorted(close, key=lambda bc: -(bc[0][2] - bc[0][0]) * (bc[0][3] - bc[0][1])):
+            if not any(box_iou(b, e) >= 0.5 or max(containment(b, e), containment(e, b)) >= 0.7
+                       for e, _ in exts):
+                exts.append((b, c))
+        return [{"kind": "extinguisher", "label": "fire extinguisher", "box": b, "conf": c}
+                for b, c in exts]
 
 
 # ── Tracker ───────────────────────────────────────────────────────────────────
@@ -295,6 +343,7 @@ class ExtinguisherMonitor:
         self.recs: dict = {}
         self.merged: dict = {}            # track id merged away → id it was merged into
         self.motion, self.prev_C, self._last_size = None, None, None
+        self.prev_gray = None
         self._vt = 0.0
 
     # ── one frame ────────────────────────────────────────────────────────────
@@ -319,12 +368,16 @@ class ExtinguisherMonitor:
         self.prev_C = C
         s = self.motion.scale
         M = (np.diag([1 / s, 1 / s, 1.0]) @ step @ np.diag([s, s, 1.0]))[:2].astype(np.float32)
+        before = {t["id"]: list(t["box"]) for t in self.tracker.tracks}
         self.tracker.predict(M)
 
         t = time.time()
         dets = self.det(frame)
         info = (len(dets), 1000 * (time.time() - t))
         self.tracker.update(dets, now, "fast")
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        self._follow(gray, before, now)
+        self.prev_gray = gray
         for old, new in self.tracker.merge_duplicates().items():
             self._merge_records(old, new, vt)
         self.tracker.prune(now, W, H)
@@ -332,6 +385,22 @@ class ExtinguisherMonitor:
         self._apply_reads(now, vt, frame)
         self._update(full, k, frame, now, vt)
         return frame, info, now
+
+    def _follow(self, gray, before, now) -> None:
+        """A confirmed extinguisher that YOLOE missed this frame follows its own image
+        motion (follow_box) instead of the camera estimate, for up to FOLLOW_MAX_S."""
+        if self.prev_gray is None or self.prev_gray.shape != gray.shape:
+            return
+        for t in self.tracker.tracks:
+            if t["last_seen"] == now:                     # detected this frame
+                t["follow_since"] = None
+                continue
+            since = t.get("follow_since") or now
+            if t["hits"] < 3 or t["id"] not in before or now - since > FOLLOW_MAX_S:
+                continue
+            box = follow_box(self.prev_gray, gray, before[t["id"]])
+            if box is not None:
+                t.update(box=box, last_seen=now, follow_since=since)
 
     def _update(self, full, k, frame, now, vt):
         a = self.args

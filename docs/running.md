@@ -70,6 +70,7 @@ The most relevant settings are:
 | `[models] locate_anything` | Set `false` when no LocateAnything service is being used. The current tablet requests it off. |
 | `[server] port` | Backend port; normally `8100`. |
 | `[server] video_dir` | Folder containing recordings available to the tablet; `.` means the project root. |
+| `[server] record` | `true` (default) saves every camera / stream session as two videos in `results/recordings/`: `<session>_original.mkv` (the frames analysed) and `<session>_annotated.mkv` (with boxes and statuses). Video-file sessions are not recorded. `record_fps` sets their frame rate (default 15). |
 
 For example, these are the relevant parts of a laptop configuration:
 
@@ -508,7 +509,8 @@ python run.py inspect rtsp://$WIN:8554/live/x2 --save results/venue_$(date +%H%M
 ### Stopping
 
 1. Press `q` in the inspection window.
-2. Press `Ctrl+C` in the backend terminal.
+2. Press `Ctrl+C` in the backend terminal. This also finishes the session recordings in
+   `results/recordings/`.
 3. Stop the livestream in Mimo, close MediaMTX, and turn off the camera.
 4. Free the GPU: `bash server/stop_all.sh qwen`.
 
@@ -658,6 +660,12 @@ results per second.
 Browser:     video ─► JPEG frames ──WS /api/live──►  GPU server: backend (FastAPI, :8100)
              boxes ◄── JSON (boxes, statuses) ◄──     └─ YOLOE + LocateAnything + Qwen
 ```
+
+**Recordings.** The backend saves each camera / stream session (live mode, or a server
+session from a stream URL or the external camera) as `results/recordings/<session>_original.mkv`
+and `<session>_annotated.mkv`; see `[server] record` in `config.toml`. The videos play in
+real time at `record_fps`. Replay the original through the pipeline with
+`python run.py inspect results/recordings/<session>_original.mkv`.
 
 **On the server:** run `bash server/start_all.sh`. It starts Qwen, LocateAnything and
 the backend, and prints the backend port and token. To start only the backend, run

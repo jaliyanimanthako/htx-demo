@@ -4,11 +4,23 @@ Offline tests for the core logic (no GPU, no network):
     python tests/test_core.py        # or: python -m pytest tests
 """
 
+import contextlib
+import io
 import sys
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from datetime import date                                             # noqa: E402
+
+import cv2                                                            # noqa: E402
+import numpy as np                                                    # noqa: E402
+
+from core import expiry, video_io                                     # noqa: E402
+from core import models                                               # noqa: E402
 from core.labels import kind_of                                      # noqa: E402
 from core.parsing import parse_response                               # noqa: E402
 from core.rules import assess, covers_door_base, merge_double_doors  # noqa: E402
@@ -53,6 +65,23 @@ def test_far_obstruction_dropped():
     assert [x["type"] for x in d] == ["exit"] and d[0]["status"] == "clear"
 
 
+def test_model_names():
+    assert models.yoloe_file("11L") == models.yoloe_file("yoloe-11l-seg.pt") == "yoloe-11l-seg.pt"
+    assert models.yoloe_file("my-weights.pt") == "my-weights.pt"            # own weights pass through
+    assert models.qwen_repo("4b-fp8") == "Qwen/Qwen3-VL-4B-Instruct-FP8"
+    assert models.qwen_repo("qwen3-vl-4b-instruct") == "Qwen/Qwen3-VL-4B-Instruct"
+    assert models.qwen_repo("org/other-vl") == "org/other-vl"
+    assert models.yoloe_label("yoloe-26s-seg.pt") == "YOLOE-26s"
+    assert models.qwen_label("Qwen/Qwen3-VL-2B-Instruct-FP8") == "Qwen3-VL-2B-FP8"
+    for bad in (lambda: models.yoloe_file("12s"), lambda: models.yoloe_file("yoloe-11s-seg-pf.pt"),
+                lambda: models.qwen_repo("3b")):
+        try:
+            bad()
+        except ValueError:
+            continue
+        raise AssertionError("expected ValueError")
+
+
 def test_rule_occlusion_counts_hidden_base():
     door = {"x1": 600, "y1": 100, "x2": 1000, "y2": 600}       # door box cut off by boxes
     boxes = {"x1": 650, "y1": 500, "x2": 900, "y2": 900}
@@ -88,6 +117,92 @@ def test_label_kinds():
     assert kind_of("glass door", *labels) == "door"
     assert kind_of("exit sign", *labels) == "sign"
     assert kind_of("office chair", *labels) == "obstacle"
+
+
+
+def test_expiry_date_formats():
+    p = expiry.parse_date
+    assert p("15/03/2027") == (date(2027, 3, 15), "day")
+    assert p("03/15/2027", dayfirst=False) == (date(2027, 3, 15), "day")
+    assert p("13/05/2027", dayfirst=False) == (date(2027, 5, 13), "day")   # only valid order
+    assert p("2027-03-15") == (date(2027, 3, 15), "day")
+    assert p("03/2027") == p("3/27") == p("MAR 2027") == (date(2027, 3, 31), "month")
+    assert p("15 March 2027") == (date(2027, 3, 15), "day")
+    assert p("2027") == (date(2027, 12, 31), "year")
+    assert p("13/2027") is None and p("no date") is None
+    assert p("14-5-2") is None and p("1/1/1850") is None                     # not plausible years
+
+
+def test_expiry_answer_and_status():
+    today = date(2026, 10, 17)
+    a = expiry.parse_answer("DATE LAST_SERVICE 03/2025\nDATE MANUFACTURED 2019")
+    r = expiry.assess(a["dates"], today)
+    assert r["status"] == "expired" and r["due"] == date(2026, 3, 31)      # last service + 12 months
+    a = expiry.parse_answer("DATE NEXT_SERVICE 11/2026")
+    assert expiry.assess(a["dates"], today)["status"] == "valid"             # 44 days left
+    assert expiry.assess(a["dates"], today, soon_days=60)["status"] == "expiring_soon"
+    a = expiry.parse_answer("DATE NEXT_SERVICE 12/2030\nDATE MANUFACTURED 2016")
+    assert expiry.assess(a["dates"], today)["due"] == date(2026, 12, 31)     # end of life first
+    a = expiry.parse_answer("JUNE 2016 | HAS BEEN\nJUNE 2027 | HAS BEEN")       # words on the wrong date
+    assert expiry.assess(a["dates"], today)["due"] == date(2027, 6, 30)     # future "last" = next
+    a = expiry.parse_answer("DATE JUNE-2026 | ON\nDATE JUNE-2027 | NEXT RECOMMENDED SERVICING")
+    assert [d["kind"] for d in a["dates"]] == ["LAST_SERVICE", "NEXT_SERVICE"]
+    a = expiry.parse_answer("DATE UNKNOWN 05/2027")
+    assert expiry.assess(a["dates"], today)["status"] == "unclear"
+    assert expiry.parse_answer("NONE too_small") == {"dates": [], "none": "too_small"}
+    assert expiry.parse_answer("I cannot see it")["none"] == "unreadable"
+
+
+@contextlib.contextmanager
+def _fast_reconnect():
+    delay, video_io.RECONNECT_DELAY = video_io.RECONNECT_DELAY, 0.05
+    try:
+        yield
+    finally:
+        video_io.RECONNECT_DELAY = delay
+
+
+def test_live_source_stream_mode():
+    # a "file:" URL is not a local path, so it takes the webcam / stream code path;
+    # at the end of the file the reader sees a dropped stream and reconnects
+    with tempfile.TemporaryDirectory() as d, _fast_reconnect():
+        path = Path(d) / "synth.avi"
+        out = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 25, (320, 240))
+        for i in range(60):
+            out.write(np.full((240, 320, 3), i * 4, np.uint8))
+        out.release()
+        halt, log = threading.Event(), io.StringIO()
+        with contextlib.redirect_stdout(log):
+            src = video_io.LiveSource(f"file:{path}", halt=halt, timeout=5)
+            try:
+                assert (src.width, src.height, src.fps) == (320, 240, 25.0)
+                last, deadline = -1, time.time() + 5
+                while src.idx < 150 and time.time() < deadline:   # 60-frame file → reconnected
+                    idx, frame, skipped = src.read()
+                    assert idx == last + skipped + 1 and frame.shape == (240, 320, 3)
+                    last = idx
+                assert src.idx >= 150 and src.reconnects >= 2 and src.video_time() > 0
+                halt.set()
+                assert src.read() == (None, None, 0)
+            finally:
+                src.release()
+        assert not src._thread.is_alive()
+        assert "stream lost" in log.getvalue() and "stream back" in log.getvalue()
+
+
+def test_live_source_no_stream():
+    t, level = time.time(), cv2.utils.logging.getLogLevel()
+    cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)   # one warning per attempt
+    with _fast_reconnect(), contextlib.redirect_stdout(io.StringIO()):
+        try:
+            video_io.LiveSource("file:/nonexistent/none.avi", timeout=1)
+        except RuntimeError as e:
+            assert "No frames" in str(e)
+        else:
+            raise AssertionError("expected RuntimeError")
+        finally:
+            cv2.utils.logging.setLogLevel(level)
+    assert time.time() - t < 3
 
 
 if __name__ == "__main__":

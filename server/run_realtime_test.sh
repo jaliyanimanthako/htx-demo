@@ -5,8 +5,8 @@
 #   2) From the htx_demo folder:     bash server/run_realtime_test.sh IMG_0450.MOV
 #
 # Runs:
-#   a) bench_latency.py — per-call latency / throughput at 448 & 640 px, 1–8 parallel calls
-#   b) live_infer.py    — the video as a live stream (headless), annotated video saved
+#   a) apps/bench_latency.py — per-call latency / throughput at 448 & 640 px, 1–8 parallel calls
+#   b) apps/live_infer.py    — the video as a live stream (headless), annotated video saved
 # and prints a verdict on how "live" the results are.
 set -euo pipefail
 
@@ -18,7 +18,7 @@ ENV_DIR="${ENV_DIR:-$HOME/qwen-vllm}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 missing=()
-for f in bench_latency.py live_infer.py video_infer.py core/prompts.py core/stream_view.py engines/qwen_engine.py engines/__init__.py; do
+for f in run.py apps/bench_latency.py apps/live_infer.py apps/video_infer.py core/prompts.py core/stream_view.py engines/qwen_engine.py engines/__init__.py; do
   [ -f "$f" ] || missing+=("$f")
 done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -55,12 +55,12 @@ echo "== Model: $MODEL @ $URL =="
 echo
 
 echo "== a) Latency benchmark =="
-python bench_latency.py "$VIDEO" --provider local --base-url "$URL" --model "$MODEL" \
+python run.py bench "$VIDEO" --provider local --base-url "$URL" --model "$MODEL" \
   --n 10 --sizes 448 640 --concurrency 1 2 4 8 --out-dir "$OUT"
 echo
 
 echo "== b) Live run (interval ${INTERVAL}s, ${WORKERS} in flight, headless) =="
-python live_infer.py "$VIDEO" --provider local --base-url "$URL" --model "$MODEL" \
+python run.py live "$VIDEO" --provider local --base-url "$URL" --model "$MODEL" \
   --interval "$INTERVAL" --workers "$WORKERS" --change-thresh 0 \
   --no-display --save "$OUT/live_${TAG}.mp4" --out-dir "$OUT"
 echo
@@ -88,4 +88,4 @@ verdict = ("REAL-TIME: status lags < 0.5 s" if m < 0.5 else
 print(f"  verdict            : {verdict}")
 PY
 echo
-echo "Annotated video: $OUT/live_${TAG}.mp4   (copy it to your Mac to watch)"
+echo "Annotated video: $OUT/live_${TAG}.mp4   (copy it to your computer to watch)"

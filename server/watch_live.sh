@@ -3,7 +3,7 @@
 #
 #   1) In another terminal / tmux:   bash server/serve_qwen.sh 4b
 #   2) From anywhere:                bash server/watch_live.sh IMG_0450.MOV
-#   3) Open the printed URL (http://<server-ip>:8090) in a browser on your Mac.
+#   3) Open the printed URL (http://<server-ip>:8090) in a browser on your computer.
 #
 # The video loops as a live stream until Ctrl+C. Left = input, right = Qwen boxes.
 # Env overrides: INTERVAL (s between calls, default 0.2), WORKERS (default 4),
@@ -19,8 +19,8 @@ DELAY="${DELAY:-0}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-for f in live_infer.py video_infer.py core/prompts.py core/stream_view.py engines/qwen_engine.py; do
-  [ -f "$f" ] || { echo "Missing $ROOT/$f — copy it from the Mac."; exit 1; }
+for f in run.py apps/live_infer.py apps/video_infer.py core/prompts.py core/stream_view.py engines/qwen_engine.py; do
+  [ -f "$f" ] || { echo "Missing $ROOT/$f — copy it from your computer."; exit 1; }
 done
 
 # shellcheck disable=SC1091
@@ -40,6 +40,6 @@ PY
 echo "Model $MODEL @ $URL | interval ${INTERVAL}s | ${WORKERS} in flight | Ctrl+C to stop"
 LOOP=()
 [ -f "$VIDEO" ] && LOOP=(--loop)
-exec python live_infer.py "$VIDEO" --provider local --base-url "$URL" --model "$MODEL" \
+exec python run.py live "$VIDEO" --provider local --base-url "$URL" --model "$MODEL" \
   --interval "$INTERVAL" --workers "$WORKERS" --change-thresh 0 --delay "$DELAY" \
   --no-display --stream "$STREAM_PORT" "${LOOP[@]}" --out-dir results/server

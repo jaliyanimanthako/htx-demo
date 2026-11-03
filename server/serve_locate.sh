@@ -13,20 +13,30 @@ PORT="${PORT:-8020}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ -f "$ENV_DIR/.venv/bin/activate" ]; then
-  # shellcheck disable=SC1091
-  source "$ENV_DIR/.venv/bin/activate"
-else
-  # shellcheck disable=SC1091
-  source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate "$ENV_DIR/.venv"
+# Use the LocateAnything env's own interpreter — never whatever "python" is on PATH
+# (a system Anaconda torch fails with e.g. "libcudnn.so.8: cannot open shared object file")
+# shellcheck disable=SC1091
+source "$HERE/_lib.sh"
+PY="$ENV_DIR/.venv/bin/python"
+if [ -x "$PY" ] && ! "$PY" -c "import torch, transformers, fastapi, uvicorn" 2>/dev/null; then
+  set_aside "$ENV_DIR/.venv"                 # incomplete / broken → rebuild
 fi
+if [ ! -x "$PY" ]; then
+  echo "LocateAnything environment not found — setting it up (one time, ~10 min, ~8 GB)…"
+  ENV_DIR="$ENV_DIR" bash "$HERE/setup_locate.sh"
+fi
+if ! "$PY" -c "import torch, transformers" 2>/dev/null; then
+  echo "LocateAnything environment is still not usable — see the setup output above."
+  exit 1
+fi
+echo "Python: $PY ($("$PY" -c 'import torch, transformers; print("torch", torch.__version__, "| transformers", transformers.__version__)'))"
 
 GPU_ID="${CUDA_VISIBLE_DEVICES%%,*}"
 echo "== GPU $GPU_ID =="
 nvidia-smi -i "$GPU_ID" --query-gpu=name,memory.used,memory.total --format=csv,noheader
 
 # Next free port from $PORT upward (shared server)
-PORT="$(python - "$PORT" <<'PY'
+PORT="$("$PY" - "$PORT" <<'PY'
 import socket, sys
 p = int(sys.argv[1])
 for port in range(p, p + 50):
@@ -43,4 +53,4 @@ echo "$PORT" > "$ENV_DIR/port"
 SERVER_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo "LocateAnything on GPU $GPU_ID → http://${SERVER_IP:-<server-ip>}:$PORT"
 
-exec python "$HERE/locate_server.py" --port "$PORT"
+exec "$PY" "$HERE/locate_server.py" --port "$PORT"

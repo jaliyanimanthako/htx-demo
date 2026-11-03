@@ -9,8 +9,12 @@ pillow==12.1.1
 numpy==2.5.4
 opencv-python==5.0.0.93
 
-# YOLOE (yoloe_infer.py, exit_monitor.py without --no-yoloe)
+# YOLOE (apps/yoloe_infer.py, apps/exit_monitor.py without --no-yoloe)
 torch==2.14.1
 torchvision==0.29.1
 ultralytics==8.4.176
 clip @ git+https://github.com/ultralytics/CLIP.git
+
+# Backend (python -m backend) — also installed on the server by server/setup_monitor.sh
+fastapi==0.121.3
+uvicorn[standard]==0.38.0

@@ -1,0 +1,77 @@
+# Fire safety inspection settings — python run.py inspect [source] [--config FILE]
+#
+# The command line wins over this file: a source given there, --process-fps, --proc-width,
+# --yoloe, --qwen, --save, --stream, --no-display, --loop, --quiet, --only, and --set SECTION.KEY=VALUE
+# for anything else (e.g. --set exits.hold=2 --set extinguishers.enabled=false).
+# Leaving a setting out uses its default. Model-server URLs come from .env unless set here.
+
+[input]
+source = ""                 # video file, webcam index ("0" or "1") or stream URL, e.g.
+                            # "rtsp://<windows-host>:8554/live/x2" (Pocket 3 via MediaMTX)
+loop = false                # replay a video file until q
+camera_size = [1920, 1080]  # asked of a webcam (source "0"); it picks the nearest it supports.
+                            # The Pocket 3's stream resolution is set in DJI Mimo instead.
+stream_timeout = 30         # webcam / stream: give up after this many seconds without a frame
+
+[processing]
+process_fps = 0             # frames per second the whole loop takes from the source: the
+                            # window, stream and saved video update at this rate, and no task
+                            # sees the frames in between. 0 = as many as the pipeline keeps up
+                            # with. (A saved video still plays in real time.)
+proc_width = 960            # frames are downscaled to this width for tracking and drawing;
+                            # Qwen crops still come from the full-resolution frame
+
+[models]
+# Both selections are optional (defaults below). python run.py inspect --list-models shows
+# the choices, what is downloaded and what the Qwen server serves now.
+yoloe_model = "11s"         # 11s 11m 11l · v8s v8m v8l · 26n 26s 26m 26l 26x (bigger = slower,
+                            # finds more). The first run with one downloads it into models/.
+qwen = true                 # Qwen3-VL: exit confirm / depth / verdict, extinguisher date reading
+qwen_url = ""               # "" = QWEN_URL from .env
+qwen_model = "2b"           # 2b 2b-fp8 · 4b 4b-fp8 · 8b 8b-fp8 (a repo name such as
+                            # "qwen3-vl-4b-instruct" works too); "" = whatever the server serves.
+                            # The server serves one model: bash server/start_laptop.sh <name>
+                            # switches it. This 8 GB laptop fits only 2b and 2b-fp8.
+locate_anything = true      # exits only; needs a URL (none on this laptop → off)
+locate_url = ""             # "" = LOCATE_URL from .env
+
+# Each task also takes any option of its own monitor, named as in its --help with "-" → "_"
+# (python run.py exits -h, python run.py extinguishers -h).
+
+[exits]
+enabled = true
+fps = 0                     # cap for this task alone, within the processed frames (0 = all
+                            # of them). On frames it skips, the frame is still shown and the
+                            # other task still runs; this task's boxes stay where they were.
+imgsz = 640                 # YOLOE input size (larger finds smaller objects, costs more)
+hold = 1.5                  # seconds a new status must hold before an exit changes
+recheck = 8.0               # ask Qwen for a fresh verdict at least this often per exit (s)
+verdict_ttl = 6.0           # how long a Qwen verdict counts (s)
+confirm_timeout = 6.0       # show a door's status without Qwen's exit confirmation after (s)
+la_interval = 1.0           # seconds between LocateAnything calls (with locate_url only)
+
+[extinguishers]
+enabled = true
+fps = 0                     # as for [exits]
+imgsz = 640                 # YOLOE input size
+conf = 0.3                  # YOLOE confidence
+min_px = 120                # don't read extinguishers narrower than this in the original
+                            # frame ("move closer")
+read_side = 1280            # longest side of the crops sent to Qwen; keep ≤ the server's
+                            # MM_MAX_SIDE (1280 with server/start_laptop.sh)
+max_reads = 5               # reads with dates per extinguisher; stops when two agree
+today = ""                  # "YYYY-MM-DD" pretends today is that date (testing); "" = today
+monthfirst = false          # dates like 05/06/2027 are month/day (default: day/month)
+service_months = 12         # a service is valid this long when only its date is known
+life_years = 10             # service life from the manufacture date
+soon_days = 30              # DUE SOON when due within this many days
+
+[output]
+display = true              # window on this machine (q quits, space pauses)
+show_original = true        # original next to the annotated frame; false = annotated only
+view_width = 1600           # width of the window / saved video / stream (panels included)
+save = ""                   # record the view to this .mp4, e.g. "results/inspection.mp4"
+stream = 0                  # browser view on this port (e.g. 8090); 0 = off
+snapshots = true            # save a picture at each status change and each date read
+log_frames = true           # one log line per frame (false = events only)
+out_dir = "results"         # reports go to <out_dir>/fire_safety_<video name>/

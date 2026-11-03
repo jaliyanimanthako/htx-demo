@@ -8,6 +8,9 @@
 set -euo pipefail
 
 ENV_DIR="${ENV_DIR:-$HOME/qwen-vllm}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$HERE/_lib.sh"
 
 echo "== GPU =="
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv || {
@@ -16,20 +19,11 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv || {
 mkdir -p "$ENV_DIR"
 cd "$ENV_DIR"
 
-if command -v uv >/dev/null 2>&1; then
-  echo "== Creating venv with uv =="
-  uv venv --python 3.12 .venv
-  # shellcheck disable=SC1091
-  source .venv/bin/activate
-  uv pip install "vllm==${VLLM_VERSION:-0.31.0}" opencv-python-headless python-dotenv
-else
-  echo "== Creating venv with python3 -m venv (install 'uv' for a faster setup) =="
-  python3 -m venv .venv
-  # shellcheck disable=SC1091
-  source .venv/bin/activate
-  pip install -U pip
-  pip install "vllm==${VLLM_VERSION:-0.31.0}" opencv-python-headless python-dotenv
-fi
+echo "== Creating the environment (Python 3.12, via uv) =="
+new_venv "$ENV_DIR/.venv" 3.12
+# shellcheck disable=SC1091
+source .venv/bin/activate
+"$(ensure_uv)" pip install "vllm==${VLLM_VERSION:-0.31.0}" opencv-python-headless python-dotenv
 
 echo "== Check =="
 python - <<'PY'

@@ -25,14 +25,14 @@ Supported providers (OpenAI-compatible API):
   Custom        — pass --base-url and --api-key directly
 
 Usage:
-  python video_infer.py <video_path>                       # 1 candidate frame per second
-  python video_infer.py <video_path> --play                # play side-by-side when done
-  python video_infer.py <video_path> --interval 0.5        # 2 candidate frames per second
-  python video_infer.py <video_path> --workers 4           # fewer parallel calls (rate limits)
-  python video_infer.py <video_path> --change-thresh 0     # send every candidate frame
-  python video_infer.py <video_path> --prompt "..."         # override DETECTION_TASK
-  python video_infer.py <video_path> --provider qwen       # DashScope qwen-vl-max
-  python video_infer.py <video_path> --out-dir /my/results
+  python run.py video <video_path>                       # 1 candidate frame per second
+  python run.py video <video_path> --play                # play side-by-side when done
+  python run.py video <video_path> --interval 0.5        # 2 candidate frames per second
+  python run.py video <video_path> --workers 4           # fewer parallel calls (rate limits)
+  python run.py video <video_path> --change-thresh 0     # send every candidate frame
+  python run.py video <video_path> --prompt "..."         # override DETECTION_TASK
+  python run.py video <video_path> --provider qwen       # DashScope qwen-vl-max
+  python run.py video <video_path> --out-dir /my/results
 """
 
 import argparse

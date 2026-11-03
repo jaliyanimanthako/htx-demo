@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="referrer" content="no-referrer">
+  <title>Fire detection · Tablet web</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <main id="monitor" aria-label="Fire detection monitor">
+    <div class="feed" id="feed"><img id="video" alt="Annotated camera feed" hidden></div>
+    <header class="toolbar">
+      <div class="source-title"><h1 id="source-title">Pre-recorded videos</h1><p id="source-name" hidden></p></div>
+      <span id="connection" role="status">Ready</span>
+      <div class="toolbar-actions"><button id="choose-source" class="primary">Start demo</button><button id="settings-button" class="outlined">Settings</button></div>
+    </header>
+    <section id="notice" class="notice" aria-live="polite">
+      <div id="spinner" class="spinner" hidden aria-hidden="true"></div>
+      <h2 id="notice-title">Ready</h2>
+      <p id="notice-detail">Choose a source to start the demo.</p>
+      <button id="retry" class="text-button">Start demo</button>
+    </section>
+    <section id="summary" class="summary" aria-label="Monitoring summary" hidden>
+      <h2 id="hazards">Waiting for detection results</h2>
+      <p id="assistance"></p><p id="counts"></p><div id="extinguishers"></div>
+    </section>
+  </main>
+
+  <dialog id="source-dialog" aria-labelledby="source-heading">
+    <h2 id="source-heading">Choose source</h2>
+    <div class="source-options">
+      <div><button id="recorded-source" class="outlined wide">Pre-recorded video</button><p>Use one of the backend demo videos.</p></div>
+      <div><button id="external-source" class="outlined wide">External camera</button><p>Use the external camera connected to the backend.</p></div>
+    </div>
+    <div class="dialog-actions"><button class="text-button" data-close="source-dialog">Cancel</button></div>
+  </dialog>
+
+  <dialog id="videos-dialog" aria-labelledby="videos-heading">
+    <h2 id="videos-heading">Choose demo video</h2>
+    <p>Exit obstruction and extinguisher monitoring. Date verification is included when assistance is available.</p>
+    <p id="videos-message" role="status">Checking demo availability…</p>
+    <div class="progress" id="videos-progress" hidden></div>
+    <div id="videos-list" class="video-list"></div>
+    <div class="dialog-actions"><button id="video-settings" class="text-button">Settings</button><button class="text-button" data-close="videos-dialog">Close</button><button id="reload-videos" class="text-button">Retry</button></div>
+  </dialog>
+
+  <dialog id="settings-dialog" aria-labelledby="settings-heading">
+    <form id="settings-form">
+      <h2 id="settings-heading">Demo setup</h2>
+      <p>Enter the backend address and token supplied by your demo administrator.</p>
+      <label class="field">Backend URL<input id="backend-url" type="url" placeholder="http://192.168.1.20:8100" autocomplete="url" required spellcheck="false"></label>
+      <label class="field">Backend token<input id="backend-token" type="password" autocomplete="off" spellcheck="false"></label>
+      <p id="token-note" class="small">Your token stays in this browser tab.</p>
+      <label id="clear-token-label" class="checkbox" hidden><input id="clear-token" type="checkbox">Clear saved token</label>
+      <p id="settings-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="text-button" data-close="settings-dialog">Cancel</button><button type="submit" class="text-button">Save</button></div>
+    </form>
+  </dialog>
+  <noscript>This interface needs JavaScript to connect to the detection backend.</noscript>
+</body>
+</html>

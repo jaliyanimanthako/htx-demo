@@ -12,7 +12,7 @@ import uuid
 
 import cv2
 
-from backend import settings
+from backend import recording, settings
 from backend.qwen_status import QwenUnavailable
 from apps.exit_monitor import ExitMonitor, FastDetector, build_parser
 
@@ -91,6 +91,7 @@ class Session:
         self.args = args
         self._fast = fast_detector if use_yoloe or mode in ("extinguisher", "combined") else None
         self.monitor = None
+        self.recorder = None              # camera / stream sources only (backend/recording.py)
         self.thread = threading.Thread(target=self._run, name=f"session-{self.id}", daemon=True)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -103,6 +104,9 @@ class Session:
             if self._stop_requested:
                 self.status = "stopped"
                 return
+            if recording.enabled() and _URL.match(self.args.source):
+                self.recorder = recording.Recorder(
+                    f"{self.mode}_stream_{time.strftime('%Y%m%d-%H%M%S')}_{self.id}")
             if self.mode == "combined":
                 from backend.combined import CombinedMonitor
                 self.monitor = CombinedMonitor(self.args, self._fast, self._on_frame, self._on_event)
@@ -128,6 +132,9 @@ class Session:
             self.error_code = "qwen_unavailable" if isinstance(e, QwenUnavailable) else "demo_failed"
             self.status, self.error = "error", f"{type(e).__name__}: {e}"
             print(f"  [session {self.id}] error: {self.error}")
+        finally:
+            if self.recorder:
+                self.recorder.close()
 
     def stop(self):
         self._stop_requested = True
@@ -149,6 +156,8 @@ class Session:
             for name, jpeg in encoded.items():
                 self._frames[name] = (jpeg, self._frames.get(name, (None, 0))[1] + 1)
             self._state = {**state, "mode": self.mode}
+        if self.recorder:
+            self.recorder.add(original, annotated)
 
     def _on_event(self, event: dict):
         with self._lock:

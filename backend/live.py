@@ -2,6 +2,7 @@
 Live mode: the browser plays the video (or camera) locally and sends frames;
 the server runs the pipeline on each frame and returns only JSON (boxes, exit
 statuses, new events). No video is streamed back, so the view never lags.
+The frames received are recorded to <out_dir>/recordings/ (backend/recording.py).
 
 Two modes (chosen in the "start" message):
     exits         exit / obstruction monitor (apps/exit_monitor.py)
@@ -24,7 +25,7 @@ import uuid
 import cv2
 import numpy as np
 
-from backend import settings
+from backend import recording, settings
 from apps.exit_monitor import ExitMonitor, build_parser
 
 MODES = {
@@ -85,6 +86,7 @@ class LiveSession:
         self._sent_events = 0
         self.frames = 0
         self.times = deque(maxlen=60)
+        self.recorder = recording.Recorder(self.out_dir.name) if recording.enabled() else None
 
     def _init_combined(self, detectors, use_qwen, options):
         from backend.combined import CombinedMonitor
@@ -174,6 +176,8 @@ class LiveSession:
             "qwen_active": bool(self.models["qwen"]),
             "events": [{"video_time_s": round(t, 2), "text": m, "status": st} for t, m, st in events],
         })
+        if self.recorder:
+            self.recorder.add(img, result=result)   # annotated as the tablet overlay draws it
         return result
 
     def reset(self):
@@ -181,5 +185,9 @@ class LiveSession:
             self.monitor.reset()
 
     def close(self):
-        with self._lock:
-            self.monitor.shutdown(self.out_dir, self.frames, 0, self.times)
+        try:
+            with self._lock:
+                self.monitor.shutdown(self.out_dir, self.frames, 0, self.times)
+        finally:
+            if self.recorder:
+                self.recorder.close()

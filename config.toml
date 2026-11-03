@@ -14,7 +14,7 @@ camera_size = [1920, 1080]  # asked of a webcam (source "0"); it picks the neare
 stream_timeout = 30         # webcam / stream: give up after this many seconds without a frame
 
 [processing]
-process_fps = 0             # frames per second the whole loop takes from the source: the
+process_fps = 5             # frames per second the whole loop takes from the source: the
                             # window, stream and saved video update at this rate, and no task
                             # sees the frames in between. 0 = as many as the pipeline keeps up
                             # with. (A saved video still plays in real time.)
@@ -28,7 +28,7 @@ yoloe_model = "11s"         # 11s 11m 11l · v8s v8m v8l · 26n 26s 26m 26l 26x 
                             # finds more). The first run with one downloads it into models/.
 qwen = true                 # Qwen3-VL: exit confirm / depth / verdict, extinguisher date reading
 qwen_url = ""               # "" = QWEN_URL from .env
-qwen_model = "2b"           # 2b 2b-fp8 · 4b 4b-fp8 · 8b 8b-fp8 (a repo name such as
+qwen_model = ""             # 2b 2b-fp8 · 4b 4b-fp8 · 8b 8b-fp8 (a repo name such as
                             # "qwen3-vl-4b-instruct" works too); "" = whatever the server serves.
                             # The server serves one model: bash server/start_laptop.sh <name>
                             # switches it. This 8 GB laptop fits only 2b and 2b-fp8.
@@ -83,7 +83,11 @@ host = "0.0.0.0"
 port = 8100
 max_sessions = 1
 video_dir = "."             # relative to the project root, or an absolute path
+record = true               # save each camera / stream session (tablet camera, stream URL,
+                            # external camera; not video files) as two videos in
+                            # <out_dir>/recordings/: <session>_original.mkv + _annotated.mkv
+record_fps = 15             # frame rate of those videos; frames repeat or drop to keep real time
 
 [sources.external_camera]
 name = "External camera"
-url = ""                   # e.g. rtsp://<relay-host>:8554/live/x2
+url = "rtsp://172.20.10.3:8554/live/x2"                   # e.g. rtsp://<relay-host>:8554/live/x2

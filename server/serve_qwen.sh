@@ -61,7 +61,7 @@ export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 GPU_ID="${CUDA_VISIBLE_DEVICES:-0}"; GPU_ID="${GPU_ID%%,*}"
 read -r FREE_MB TOTAL_MB < <(nvidia-smi --query-gpu=memory.free,memory.total \
                                --format=csv,noheader,nounits -i "$GPU_ID" | tr -d ',')
-FIT_UTIL="$(python -c "print(f'{max(0.0, ($FREE_MB - 1024) / $TOTAL_MB):.2f}')")"
+FIT_UTIL="$(python -c "print(f'{max(0.0, ($FREE_MB - 256) / $TOTAL_MB):.2f}')")"
 if python -c "import sys; sys.exit(0 if $FIT_UTIL < $GPU_UTIL else 1)"; then
   echo "GPU is shared: ${FREE_MB} MiB free of ${TOTAL_MB} MiB — lowering gpu_util $GPU_UTIL → $FIT_UTIL"
   GPU_UTIL="$FIT_UTIL"

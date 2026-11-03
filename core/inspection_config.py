@@ -13,7 +13,8 @@ TASKS = ("exits", "extinguishers")
 # Settings of the inspection itself (config.toml explains each). [exits] and
 # [extinguishers] also take every option of their monitor that is not in SHARED.
 DEFAULTS = {
-    "server": {"host": "0.0.0.0", "port": 8100, "max_sessions": 1, "video_dir": "."},
+    "server": {"host": "0.0.0.0", "port": 8100, "max_sessions": 1, "video_dir": ".",
+               "record": True, "record_fps": 15.0},
     "sources": {"external_camera": {"name": "External camera", "url": ""}},
     "input": {"source": "", "loop": False, "camera_size": [1920, 1080], "stream_timeout": 30.0},
     "processing": {"process_fps": 0.0, "proc_width": 960},
@@ -108,6 +109,7 @@ def load_config(path: str = None, sets: list = ()) -> dict:
     ranges = [
         ("server.port", 1 <= cfg["server"]["port"] <= 65535),
         ("server.max_sessions", cfg["server"]["max_sessions"] >= 1),
+        ("server.record_fps", cfg["server"]["record_fps"] > 0),
         ("input.stream_timeout", cfg["input"]["stream_timeout"] > 0),
         ("input.camera_size", all(n > 0 for n in cfg["input"]["camera_size"])),
         ("processing.proc_width", cfg["processing"]["proc_width"] >= 64),

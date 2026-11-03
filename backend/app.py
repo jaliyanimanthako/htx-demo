@@ -35,7 +35,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.qwen_status import QwenUnavailable, require_qwen
-from backend import settings
+from backend import recording, settings
 from backend.live import MODES as LIVE_MODES
 from backend.sessions import STREAMS, SessionError, SessionManager, list_videos
 
@@ -334,6 +334,7 @@ async def live(ws: WebSocket, token: Optional[str] = None):
 @app.on_event("shutdown")
 def _shutdown():
     manager.stop_all()
+    recording.close_all()       # finish the session videos even if a session thread is still busy
 
 
 # ── root: the backend is API-only; the web app (frontend/) is hosted separately ──

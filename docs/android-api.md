@@ -25,6 +25,10 @@ message reference. The web app in `frontend/` uses the same API.
   time. A second one is refused with `already running … stop it first` until the
   first ends. To switch between exits and extinguishers, close the live connection and
   open a new one.
+- **Camera sessions are recorded on the server.** Live mode, and server sessions from a
+  stream URL or `external-camera`, are saved as two videos (original and annotated) in
+  `BACKEND_OUT_DIR/recordings/`. The app doesn't need to do anything; `[server] record = false`
+  in `config.toml` turns it off.
 
 ## Connecting from Android
 
@@ -694,7 +698,7 @@ Colours used by the web app: green `valid`, amber `expiring_soon` / `unclear`, r
 | You send (text JSON) | Server replies | |
 |---|---|---|
 | `{"type": "reset"}` | `{"type": "reset_done"}` | forget everything tracked (new video, new room). Send it when the user switches the source |
-| `{"type": "stop"}` | the socket closes | ends the session; the server writes its report into `BACKEND_OUT_DIR` |
+| `{"type": "stop"}` | the socket closes | ends the session; the server writes its report and finishes its recording in `BACKEND_OUT_DIR` |
 
 Just closing the socket also ends the session. **To switch mode,** close the socket
 and open a new one with the other `mode`.

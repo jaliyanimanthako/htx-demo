@@ -1,6 +1,6 @@
 # Backend API for the Android app
 
-For the integrated tablet demo, start with [Tablet demo with the RTMP backend](tablet-rtmp-integration.md). Authenticated `GET /api/sources` reports the configured external camera; create a combined session with `source: "external-camera"` to use it. This guide also describes the individual detection modes.
+For the integrated tablet demo, start with [Setup and run the demo](running.md). Authenticated `GET /api/sources` reports the configured external camera; create a combined session with `source: "external-camera"` to use it. This guide also describes the individual detection modes.
 
 
 This page is for whoever builds the Android tablet app. It covers what the backend can

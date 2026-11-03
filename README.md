@@ -1,6 +1,6 @@
 # Exit Obstruction Monitor
 
-Tablet integration: see [Tablet demo with the RTMP backend](docs/tablet-rtmp-integration.md) for shared configuration, both backend machine setups, and the new External camera source.
+Tablet integration: see [Setup and run the demo](docs/running.md) for shared configuration, both backend machine setups, and the new External camera source.
 
 
 Detects **exits** (doors, glass doors, doorways) in video from a handheld camera and

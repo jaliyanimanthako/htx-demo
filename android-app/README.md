@@ -1,6 +1,6 @@
 # Fire Safety Demo for Android tablets
 
-The source picker also supports **External camera** using the shared root `config.toml`. See [RTMP backend integration](../docs/tablet-rtmp-integration.md) for setup on WSL or the GPU server. The tablet interface and detection labels are retained.
+The source picker also supports **External camera** using the shared root `config.toml`. See [Setup and run the demo](../docs/running.md) for setup on WSL or the GPU server. The tablet interface and detection labels are retained.
 
 
 Native Kotlin / Jetpack Compose landscape client for combined **exit-obstruction and fire-extinguisher monitoring**, with optional Qwen-assisted analysis. Local MacBook development works without a Qwen/GPU server. The Python backend runs both detection pipelines. The tablet displays backend-annotated recordings or uses its rear camera with local preview and backend detection overlays. It does not run models locally or start Qwen. Flame/smoke detection is not implemented.
@@ -12,8 +12,9 @@ Native Kotlin / Jetpack Compose landscape client for combined **exit-obstruction
 3. Tap **Start demo** and choose a source:
    - **Pre-recorded video**: choose a backend demo video.
    - **Tablet camera**: grant camera permission when asked, then use the rear camera for live monitoring.
+   - **External camera**: use the camera stream configured on the backend; no tablet camera permission is needed.
 4. View the feed, exit-hazard count, visible extinguishers, and date/due-date status when available.
-5. Use **Change source** to switch between recordings and the tablet camera without restarting.
+5. Use **Change source** to switch between recordings, the tablet camera and the external camera without restarting.
 
 If camera permission is denied, **Choose another source** returns to the recorded-video workflow. **Grant camera permission** requests permission again; **Open app settings** provides a path when Android no longer shows the permission prompt. Camera access is optional for using recorded videos.
 

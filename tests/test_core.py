@@ -205,6 +205,20 @@ def test_live_source_no_stream():
     assert time.time() - t < 3
 
 
+def test_follow_box_moves_and_zooms():
+    from apps.extinguisher_monitor import follow_box
+    rng = np.random.default_rng(0)
+    scene = cv2.GaussianBlur(rng.integers(0, 255, (480, 640), dtype=np.uint8), (5, 5), 0)
+    A = cv2.getRotationMatrix2D((320, 240), 0, 1.1)       # walking closer: 10 % zoom …
+    A[:, 2] += (12, -8)                                    # … and a small move
+    nxt = cv2.warpAffine(scene, A, (640, 480))
+    box = follow_box(scene, nxt, [500, 200, 700, 400])     # partly out of the frame
+    want = [500 * 1.1 - 320 * 0.1 + 12, 200 * 1.1 - 240 * 0.1 - 8,
+            700 * 1.1 - 320 * 0.1 + 12, 400 * 1.1 - 240 * 0.1 - 8]
+    assert box is not None and max(abs(a - b) for a, b in zip(box, want)) < 3, box
+    assert follow_box(scene, np.zeros_like(scene), [100, 100, 300, 300]) is None   # nothing to follow
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0

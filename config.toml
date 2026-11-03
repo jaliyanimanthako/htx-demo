@@ -75,3 +75,15 @@ stream = 0                  # browser view on this port (e.g. 8090); 0 = off
 snapshots = true            # save a picture at each status change and each date read
 log_frames = true           # one log line per frame (false = events only)
 out_dir = "results"         # reports go to <out_dir>/fire_safety_<video name>/
+
+# Shared by python run.py inspect and python run.py backend.
+# Select a machine-specific file with --config configs/wsl.local.toml or HTX_CONFIG.
+[server]
+host = "0.0.0.0"
+port = 8100
+max_sessions = 1
+video_dir = "."             # relative to the project root, or an absolute path
+
+[sources.external_camera]
+name = "External camera"
+url = ""                   # e.g. rtsp://<relay-host>:8554/live/x2

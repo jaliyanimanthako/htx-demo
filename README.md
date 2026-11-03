@@ -1,5 +1,8 @@
 # Exit Obstruction Monitor
 
+Tablet integration: see [Setup and run the demo](docs/running.md) for shared configuration, both backend machine setups, and the new External camera source.
+
+
 Detects **exits** (doors, glass doors, doorways) in video from a handheld camera and
 decides, in near real time, whether each one is **clear**, **partially obstructed** or
 **obstructed**, and by what (boxes, chairs, trolleys, …).

@@ -54,7 +54,7 @@ EXT_CLASSES = ["fire extinguisher"]
 # similar-looking things YOLOE should label as something else
 DECOY_CLASSES = ["fire hose reel", "fire alarm", "red bag", "water bottle", "red trash can"]
 STATUS_BGR = {"reading": (160, 160, 160), "valid": (0, 200, 0), "expiring_soon": (0, 200, 255),
-              "expired": (0, 0, 255), "unclear": (0, 200, 255), "unreadable": (200, 120, 200)}
+              "expired": (0, 0, 255), "unclear": (160, 160, 160), "unreadable": (160, 160, 160)}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 SHARP_REF = 3000.0   # Laplacian variance of a crop (at 256 px high) that counts as sharp
 TAG_SIDE = 1000      # the sticker crop is upscaled to about this many px (more pixels per digit)
@@ -258,8 +258,11 @@ class ExtRecord:
 
 
 class ExtinguisherMonitor:
-    def __init__(self, args, detector=None):
+    def __init__(self, args, detector=None, on_frame=None, on_event=None):
         self.args = args
+        self.on_frame, self.on_event = on_frame, on_event
+        self.report_path = None
+        self._halt = False
         self.today = date.fromisoformat(args.today) if args.today else date.today()
         self.det = detector or ExtinguisherDetector(args.yoloe_model, args.conf)
         self.reader = None
@@ -271,6 +274,9 @@ class ExtinguisherMonitor:
         self.snap_dir = Path(args.out_dir)
         self._log = []
         self.reset()
+
+    def request_stop(self):
+        self._halt = True
 
     def _note(self, text: str) -> None:
         if self.args.log_frames:                 # per-frame log line (CLI); off in the backend
@@ -529,6 +535,8 @@ class ExtinguisherMonitor:
         msg = f"EXTINGUISHER #{rec.id}: {self._describe(rec)}"
         print(f"  [{vt:6.1f}s] {msg}")
         self.events.append((vt, msg, rec.status))
+        if self.on_event:
+            self.on_event({"video_time_s": round(vt, 2), "text": msg, "status": rec.status})
 
     # ── backend live mode (same interface as ExitMonitor) ────────────────────
     def start_workers(self) -> None:
@@ -581,13 +589,17 @@ class ExtinguisherMonitor:
             if not rec.visible or t is None:
                 continue
             x1, y1, x2, y2 = (int(v) for v in t["box"])
-            col = STATUS_BGR[rec.status]
+            verified = self.reader is not None and rec.confirmed
+            col = STATUS_BGR[rec.status] if verified and not rec.pending else STATUS_BGR["reading"]
             cv2.rectangle(out, (x1, y1), (x2, y2), col, th + 2)
-            text = f"EXT #{tid} {STATUS_TEXT[rec.status]}"
+            text = "Extinguisher " + ("READING" if self.reader and rec.pending else
+                STATUS_TEXT[rec.status] if self.reader else "DETECTED - dates unchecked")
             if rec.due:
                 text += f" {fmt_date(rec.due, rec.precision)}" + ("" if rec.confirmed else "?")
             if rec.pending:
                 text += " ..."
+            elif self.reader and not rec.confirmed and rec.status in ("valid", "expiring_soon", "expired"):
+                text += " (unverified)"
             elif rec.hint and rec.status in ("reading", "unreadable"):
                 text += f" ({rec.hint})"
             _label(out, text, x1, y1, col, s, th)
@@ -627,7 +639,7 @@ class ExtinguisherMonitor:
         streamer = MJPEGStreamer(a.stream).start() if a.stream else None
         writer, win, times = None, "Extinguisher monitor (q: quit, space: pause)", []
         try:
-            while True:
+            while not self._halt:
                 idx, frame, skipped = src.read()
                 if frame is None:
                     break
@@ -645,6 +657,11 @@ class ExtinguisherMonitor:
                 top = cv2.resize(cv2.hconcat([frame, annotated]), (2 * half, int(H * half / W) // 2 * 2),
                                  interpolation=cv2.INTER_AREA)
                 combined = cv2.vconcat([top, self.panel(2 * half, vt, fps)])
+                if self.on_frame:
+                    state = {"mode": "extinguisher", "video_time_s": round(vt, 2),
+                             "fps": round(fps, 1), "date_reading_enabled": self.reader is not None,
+                             **self.live_result(W, H)}
+                    self.on_frame(frame, annotated, combined, state)
                 if a.save and writer is None:
                     Path(a.save).parent.mkdir(parents=True, exist_ok=True)
                     writer = cv2.VideoWriter(a.save, cv2.VideoWriter_fourcc(*"mp4v"), src.fps,
@@ -732,7 +749,7 @@ class ExtinguisherMonitor:
                 if box:
                     x1, y1, x2, y2 = (int(v) for v in box)
                     cv2.rectangle(annotated, (x1, y1), (x2, y2), STATUS_BGR[status], th + 2)
-                    _label(annotated, f"EXT {n} {STATUS_TEXT[status]}", x1, y1, STATUS_BGR[status], s, th)
+                    _label(annotated, f"Extinguisher {n} {STATUS_TEXT[status]}", x1, y1, STATUS_BGR[status], s, th)
                 results.append(entry)
             cv2.imwrite(str(out_dir / f"{p.stem}_annotated.jpg"), annotated)
         path = out_dir / "report.json"
@@ -753,6 +770,7 @@ class ExtinguisherMonitor:
                "events": [{"video_time_s": round(t, 2), "event": m} for t, m, _ in self.events]}
         path = out_dir / "report.json"
         path.write_text(json.dumps(rep, indent=2))
+        self.report_path = path
         print(f"\n  {stats['frames']} frames ({stats['dropped']} dropped) | fast loop "
               f"{stats['fast_loop_ms']} ms/frame | {len(exts)} extinguishers")
         for r in sorted(self.recs.values(), key=lambda r: r.id):

@@ -1,0 +1,9 @@
+.gradle/
+.kotlin/
+local.properties
+**/build/
+*.iml
+.idea/
+
+# Intentionally bundle converted offline demo clips.
+!app/src/main/assets/demo_videos/*.mp4

@@ -33,7 +33,6 @@ import argparse
 import json
 import os
 import time
-import tomllib
 from collections import Counter, deque
 from datetime import date
 from pathlib import Path
@@ -43,104 +42,15 @@ import numpy as np
 
 from apps import exit_monitor, extinguisher_monitor
 from core import video_io
-from core.config import ROOT  # also loads .env
 from core.expiry import STATUS_TEXT as EXT_STATUS_TEXT
-from core.models import (DEFAULT_QWEN, DEFAULT_YOLOE, QWEN_MODELS, YOLOE_MODELS, qwen_label,
+from core.models import (QWEN_MODELS, YOLOE_MODELS, qwen_label,
                          qwen_repo, yoloe_file, yoloe_label)
 from core.qwen_assist import first_served_model
 from core.stream_view import MJPEGStreamer
 from core.video_io import LiveSource
 
-CONFIG_FILE = ROOT / "config.toml"
+from core.inspection_config import load_config, task_options
 TASKS = {"exits": exit_monitor, "extinguishers": extinguisher_monitor}
-
-# Settings of the inspection itself (config.toml explains each). [exits] and
-# [extinguishers] also take every option of their monitor that is not in SHARED.
-DEFAULTS = {
-    "input": {"source": "", "loop": False, "camera_size": [1920, 1080], "stream_timeout": 30.0},
-    "processing": {"process_fps": 0.0, "proc_width": 960},
-    "models": {"yoloe_model": DEFAULT_YOLOE, "qwen": True, "qwen_url": "", "qwen_model": DEFAULT_QWEN,
-               "locate_anything": True, "locate_url": ""},
-    "exits": {"enabled": True, "fps": 0.0, "imgsz": 640},
-    "extinguishers": {"enabled": True, "fps": 0.0, "imgsz": 640},
-    "output": {"display": True, "show_original": True, "view_width": 1600, "save": "",
-               "stream": 0, "snapshots": True, "log_frames": True, "out_dir": "results"},
-}
-# monitor options set for both tasks from [input] / [processing] / [models] / [output]
-SHARED = {"source", "loop", "proc_width", "yoloe_model", "qwen_url", "qwen_model", "no_qwen",
-          "locate_url", "no_display", "stream", "save", "snapshots", "log_frames", "out_dir"}
-KIND = {bool: "true or false", int: "a whole number", float: "a number", str: 'text in "quotes"'}
-
-
-# ── Settings ──────────────────────────────────────────────────────────────────
-
-def _task_options(task: str) -> dict:
-    """Options of that task's monitor (its CLI: dest → default) that its section may set."""
-    defaults = vars(TASKS[task].build_parser().parse_args(["x"]))
-    return {k: v for k, v in defaults.items() if k not in SHARED}
-
-
-def _coerce(where: str, value, default):
-    """A value from the file or --set, checked against the type of its default."""
-    if isinstance(value, date):                      # TOML date: today = 2026-12-01
-        value = value.isoformat()
-    if default is None:
-        return value
-    if isinstance(default, list):
-        ok = (isinstance(value, list) and len(value) == len(default)
-              and all(type(v) is type(d) for v, d in zip(value, default)))
-        kind = f"a list like {default}"
-    elif isinstance(default, float):
-        ok = type(value) in (int, float)
-        value, kind = float(value) if ok else value, KIND[float]
-    else:
-        ok, kind = type(value) is type(default), KIND[type(default)]
-    if not ok:
-        raise SystemExit(f"  Setting {where} = {value!r}: expected {kind}")
-    return value
-
-
-def _parse_set(item: str) -> tuple:
-    """--set SECTION.KEY=VALUE → (section, key, value); VALUE in TOML syntax or bare text."""
-    key, eq, raw = item.partition("=")
-    section, dot, name = key.strip().partition(".")
-    if not (eq and dot):
-        raise SystemExit(f"  --set {item!r}: expected SECTION.KEY=VALUE, e.g. exits.hold=2")
-    try:
-        value = tomllib.loads(f"v = {raw}")["v"]
-    except tomllib.TOMLDecodeError:
-        value = raw                                  # e.g. --set input.source=IMG_0451.MOV
-    return section, name, value
-
-
-def load_config(path: str = None, sets: list = ()) -> dict:
-    """DEFAULTS ← the settings file (config.toml unless `path`) ← --set items."""
-    file = Path(path) if path else CONFIG_FILE
-    data = {}
-    if path or file.is_file():
-        try:
-            with open(file, "rb") as f:
-                data = tomllib.load(f)
-        except (OSError, tomllib.TOMLDecodeError) as e:
-            raise SystemExit(f"  Cannot read the settings file {file}: {e}") from None
-    items = []
-    for section, values in data.items():
-        if not isinstance(values, dict):
-            raise SystemExit(f"  {file}: put '{section}' under a section ({', '.join(DEFAULTS)})")
-        items += [(section, k, v) for k, v in values.items()]
-    items += [_parse_set(s) for s in sets]
-
-    cfg = {section: dict(values) for section, values in DEFAULTS.items()}
-    options = {task: _task_options(task) for task in TASKS}
-    for section, key, value in items:
-        if section not in cfg:
-            raise SystemExit(f"  Unknown section [{section}] — one of: {', '.join(cfg)}")
-        known = {**options.get(section, {}), **DEFAULTS[section]}
-        if key not in known:
-            raise SystemExit(f"  Unknown setting {section}.{key} — [{section}] takes: "
-                             f"{', '.join(sorted(known))}")
-        cfg[section][key] = _coerce(f"{section}.{key}", value, known[key])
-    return cfg
 
 
 def check_models(m: dict) -> None:
@@ -270,7 +180,7 @@ class FireSafetyInspection:
         """That monitor's CLI defaults ← its section ← the shared settings."""
         c, o = self.cfg, self.cfg["output"]
         a = TASKS[task].build_parser().parse_args([c["input"]["source"]])
-        options = _task_options(task)
+        options = task_options(task)
         for key, value in c[task].items():
             if key in options:
                 setattr(a, key, value)
@@ -509,6 +419,8 @@ def main():
     i, p, o = cfg["input"], cfg["processing"], cfg["output"]
     if a.source:
         i["source"] = a.source
+    if i["source"] == "external-camera":
+        i["source"] = cfg["sources"]["external_camera"]["url"]
     if a.loop:
         i["loop"] = True
     if a.yoloe:

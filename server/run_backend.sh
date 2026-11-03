@@ -24,6 +24,19 @@ fi
 # shellcheck disable=SC1091
 source "$ENV_DIR/.venv/bin/activate"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+# Make --config visible to preflight/model selection as well as the backend.
+EXPECT_CONFIG=0
+for arg in "$@"; do
+  if [ "$EXPECT_CONFIG" = 1 ]; then
+    export HTX_CONFIG="$arg"
+    EXPECT_CONFIG=0
+  elif [ "$arg" = "--config" ]; then
+    EXPECT_CONFIG=1
+  elif [[ "$arg" == --config=* ]]; then
+    export HTX_CONFIG="${arg#--config=}"
+  fi
+done
+
 
 QWEN_PORT="$(cat "$HOME/qwen-vllm/port" 2>/dev/null || echo 8010)"
 LOCATE_PORT="$(cat "$HOME/locate-anything/port" 2>/dev/null || echo 8020)"
@@ -66,13 +79,20 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   fi
 fi
 
-# YOLOE weights + text encoder: download now, not inside the first Start request
-if [ ! -f "$ROOT/models/yoloe-11s-seg.pt" ] || [ ! -f "$ROOT/models/mobileclip_blt.ts" ]; then
+# YOLOE weights + text encoder: use the selected TOML model.
+YOLOE_MODEL="$(python - <<'PYMODEL'
+from backend import settings
+from core.models import yoloe_file
+print(yoloe_file(settings.CONFIG["models"]["yoloe_model"]))
+PYMODEL
+)"
+if [ ! -f "$ROOT/models/$YOLOE_MODEL" ] || [ ! -f "$ROOT/models/mobileclip_blt.ts" ]; then
   echo "Downloading YOLOE weights + text encoder into $ROOT/models (one time, ~600 MB)…"
   mkdir -p "$ROOT/models"
-  (cd "$ROOT/models" && python - <<'PY'
+  (cd "$ROOT/models" && python - "$YOLOE_MODEL" <<'PY'
+import sys
 from ultralytics import YOLOE
-m = YOLOE("yoloe-11s-seg.pt")
+m = YOLOE(sys.argv[1])
 m.set_classes(["door"], m.get_text_pe(["door"]))
 print("YOLOE ready")
 PY
@@ -90,4 +110,6 @@ echo "Qwen           $QWEN_URL : $(check "$QWEN_URL/models")"
 echo "LocateAnything $LOCATE_URL : $(check "$LOCATE_URL/health")"
 echo "(sessions can still start with the servers down — those models are then skipped/failing)"
 
-exec python -m backend --port "${PORT:-8100}"
+ARGS=()
+[ -n "${PORT:-}" ] && ARGS+=(--port "$PORT")
+exec python -m backend "${ARGS[@]}" "$@"

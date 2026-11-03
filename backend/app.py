@@ -6,7 +6,7 @@ FastAPI app
   GET    /api/info                           model servers up/down, videos, sessions
   GET    /api/videos                         video files a session can play
   GET    /api/sessions                       all sessions
-  POST   /api/sessions                       start one  {source, loop, use_yoloe, use_locate, use_qwen, options}
+  POST   /api/sessions                       start one  {source, mode, loop, use_yoloe, use_locate, use_qwen, options}
   GET    /api/sessions/{id}                  status + latest state (exits, events)
   DELETE /api/sessions/{id}                  stop it (report is written)
   GET    /api/sessions/{id}/stream/{name}    MJPEG: original | annotated | combined
@@ -27,13 +27,14 @@ import secrets
 import traceback
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from backend.qwen_status import QwenUnavailable, require_qwen
 from backend import settings
 from backend.live import MODES as LIVE_MODES
 from backend.sessions import STREAMS, SessionError, SessionManager, list_videos
@@ -90,11 +91,14 @@ def _up(url: str) -> bool:
 # ── API ───────────────────────────────────────────────────────────────────────
 
 class SessionRequest(BaseModel):
+    mode: Literal["exits", "extinguisher", "combined"] = "exits"
     source: str = Field(..., description="video file name in the video folder, or rtsp:// URL")
     loop: bool = True
     use_yoloe: bool = True
     use_locate: bool = True
     use_qwen: bool = True
+    demo_client_id: Optional[str] = Field(default=None, pattern=r"^[a-f0-9-]{36}$")
+    require_qwen: bool = False  # tablet demo: fail explicitly rather than degrade
     options: dict = Field(default_factory=dict,
                           description="hold, la_interval, name_every, recheck, confirm_timeout")
 
@@ -111,14 +115,21 @@ def health():
 @app.get("/api/info", dependencies=[Depends(require_token)])
 def info():
     return {"models": {"locate_anything": {"url_set": bool(settings.LOCATE_URL),
-                                           "up": _up(settings.LOCATE_URL + "/health")},
+                                           "up": bool(settings.LOCATE_URL) and _up(settings.LOCATE_URL + "/health")},
                        "qwen": {"url_set": bool(settings.QWEN_URL),
-                                "up": _up(settings.QWEN_URL + "/models")}},
+                                "up": bool(settings.QWEN_URL) and _up(settings.QWEN_URL + "/models")}},
             "modes": [{"id": k, "title": v["title"]} for k, v in LIVE_MODES.items()],
             "videos": list_videos(), "max_sessions": settings.MAX_SESSIONS,
             "sessions": [s.info() for s in manager.sessions.values()],
             "live_sessions": [{"id": l.id, "mode": l.mode, "frames": l.frames}
                               for l in manager.live.values()]}
+
+
+@app.get("/api/sources", dependencies=[Depends(require_token)])
+def sources():
+    camera = settings.external_camera()
+    return {"sources": [{"id": settings.EXTERNAL_SOURCE, "name": camera["name"],
+                         "configured": bool(camera["url"].strip())}]}
 
 
 @app.get("/api/videos", dependencies=[Depends(require_token)])
@@ -133,10 +144,17 @@ def sessions():
 
 @app.post("/api/sessions", dependencies=[Depends(require_token)], status_code=201)
 def create_session(req: SessionRequest):
+    if req.require_qwen:
+        if req.mode != "combined" or not req.use_qwen or not req.use_yoloe:
+            raise HTTPException(400, "Required-Qwen demo needs both detectors and Qwen")
+        try:
+            require_qwen(settings.QWEN_URL)
+        except QwenUnavailable:
+            raise HTTPException(503, {"code": "qwen_unavailable"})
     try:
         s = manager.create(req.source, req.loop, req.use_yoloe, req.use_locate, req.use_qwen,
-                           req.options)
-    except SessionError as e:
+                           req.options, mode=req.mode, demo_client_id=req.demo_client_id, require_qwen=req.require_qwen)
+    except (SessionError, ValueError) as e:
         raise HTTPException(409 if "already running" in str(e) else 400, str(e))
     return s.info()
 
@@ -164,6 +182,9 @@ def get_report(sid: str):
     for e in report.get("exits", []):
         if e.get("snapshot"):
             e["snapshot"] = Path(e["snapshot"]).name
+    for item in report.get("extinguishers", []):
+        if item.get("scene"):
+            item["scene"] = Path(item["scene"]).name
     return report
 
 
@@ -217,7 +238,8 @@ async def events(ws: WebSocket, sid: str, token: Optional[str] = None):
             if now - last_state >= 0.5:
                 info = s.info()
                 await ws.send_json({"type": "state", "status": info["status"],
-                                    "state": info["state"]})
+                                    "state": info["state"], "mode": info["mode"],
+                                    "error_code": info.get("error_code")})
                 last_state = now
             if s.done:
                 await ws.send_json({"type": "end", "session": s.info()})
@@ -245,7 +267,9 @@ async def live(ws: WebSocket, token: Optional[str] = None):
        (extinguisher mode: "extinguishers": [{id, status, due_text, confirmed, box, ...}])
     3. client → {"type": "reset"} (new video) or {"type": "stop"}
     """
-    if not _token_ok(token):
+    header = ws.headers.get("authorization", "")
+    supplied = header[7:] if header.lower().startswith("bearer ") else token
+    if not _token_ok(supplied):
         await ws.close(code=4401)
         return
     await ws.accept()
@@ -256,12 +280,21 @@ async def live(ws: WebSocket, token: Optional[str] = None):
             await ws.send_json({"type": "error", "detail": "first message must be {type: start}"})
             return
         try:
-            session = await asyncio.to_thread(
+            creation = asyncio.create_task(asyncio.to_thread(
                 manager.create_live, start.get("mode", "exits"), start.get("use_yoloe", True),
                 start.get("use_locate", True), start.get("use_qwen", True),
-                start.get("options") or {})
+                start.get("options") or {}))
+            try:
+                session = await asyncio.shield(creation)
+            except asyncio.CancelledError:
+                # to_thread cannot cancel model initialization. Join and release
+                # its result so a disconnected starter cannot leave an orphan.
+                created = await creation
+                await asyncio.to_thread(manager.close_live, created)
+                raise
         except Exception as e:
-            await ws.send_json({"type": "error", "detail": f"{type(e).__name__}: {e}"})
+            await ws.send_json({"type": "error", "code": "backend_in_use" if isinstance(e, SessionError) else "live_failed",
+                                "detail": f"{type(e).__name__}: {e}"})
             return
         await ws.send_json(session.ready_message())
         while True:

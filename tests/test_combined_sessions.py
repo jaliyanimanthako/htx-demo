@@ -8,8 +8,8 @@ import numpy as np
 from backend.combined import CombinedMonitor
 from backend.sessions import SessionManager, Session
 from backend.app import SessionRequest
-from exit_monitor import ExitMonitor, build_parser
-import extinguisher_monitor as X
+from apps.exit_monitor import ExitMonitor, build_parser
+from apps import extinguisher_monitor as X
 
 
 class CombinedSessionTests(unittest.TestCase):
@@ -44,10 +44,10 @@ class CombinedSessionTests(unittest.TestCase):
             source.read.return_value = (0, np.zeros((48, 64, 3), dtype=np.uint8), 0)
             source.video_time.return_value = 1.25
             with patch("backend.combined.LiveSource", return_value=source) as factory, \
-                 patch.object(ExitMonitor, "_draw", side_effect=AssertionError("Legacy exit renderer used")), \
+                 patch.object(ExitMonitor, "draw", side_effect=AssertionError("Legacy exit renderer used")), \
                  patch.object(X.ExtinguisherMonitor, "draw", side_effect=AssertionError("Legacy extinguisher renderer used")):
                 monitor.run()
-            factory.assert_called_once_with("demo.MOV", loop=True)
+            factory.assert_called_once_with("demo.MOV", loop=True, halt=monitor._halt, timeout=30.0)
             source.read.assert_called_once()
             source.release.assert_called_once()
             self.assertEqual(len(inputs), 2)

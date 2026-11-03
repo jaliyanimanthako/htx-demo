@@ -1,5 +1,8 @@
 # Exit Obstruction Monitor
 
+Tablet integration: see [Tablet demo with the RTMP backend](docs/tablet-rtmp-integration.md) for shared configuration, both backend machine setups, and the new External camera source.
+
+
 Detects **exits** (doors, glass doors, doorways) in video from a handheld camera and
 decides, in near real time, whether each one is **clear**, **partially obstructed** or
 **obstructed**, and by what (boxes, chairs, trolleys, …).
@@ -14,9 +17,9 @@ objects every frame and shows the result live.
 | **LocateAnything-3B** (NVIDIA) | Accurate boxes, finds what YOLOE misses | ~1 per 1.5–2 s (server GPU 1) |
 | **Qwen3-VL-4B-Instruct** (vLLM) | Scene understanding: is it an exit? on the floor? blocked? | only on events (server GPU 0) |
 
-![exit_monitor.py on a recorded walkthrough](docs/demo.gif)
+![apps/exit_monitor.py on a recorded walkthrough](docs/demo.gif)
 
-*`exit_monitor.py` on `IMG_0450.MOV`: original (left), annotated (right), exit panel and
+*`apps/exit_monitor.py` on `IMG_0450.MOV`: original (left), annotated (right), exit panel and
 event log (bottom). The exit is confirmed by Qwen and turns **BLOCKED** (chairs, cardboard
 boxes, bin); items on desks are dropped by the floor check.*
 
@@ -32,7 +35,7 @@ boxes, bin); items on desks are dropped by the floor check.*
 2. [Why both YOLOE and LocateAnything?](#why-both-yoloe-and-locateanything)
 3. [Repository layout](#repository-layout)
 4. [Setup](#setup) — client, GPU server, `.env`
-5. [Running](#running) — the monitors, backend + web app, other runners
+5. [Running](#running) — the fire safety inspection (everything else: [docs/running.md](docs/running.md))
 6. [Backend API reference](#backend-api-reference) — for building your own app on the backend
 7. [How decisions are made](#how-decisions-are-made)
 8. [Measured performance](#measured-performance)
@@ -43,7 +46,7 @@ boxes, bin); items on desks are dropped by the floor check.*
 
 ## Architecture
 
-`exit_monitor.py` combines fast detection, object tracking and background model
+`apps/exit_monitor.py` combines fast detection, object tracking and background model
 checks to show whether each exit is clear or obstructed.
 
 ![Horizontal architecture diagram of the exit obstruction monitor](docs/architecture.svg)
@@ -53,7 +56,7 @@ LocateAnything and Qwen run on the GPU server without blocking the live view.
 Qwen receives video images; tracking selects the crops and triggers scene checks.
 Exit memory stabilizes each status before it is displayed and logged.
 
-Simpler variants are also included (see [Other runners](#other-runners)).
+Simpler variants are also included (see [Other runners](docs/running.md#other-runners)).
 
 ---
 
@@ -93,7 +96,7 @@ fixed list can be found too.
 decides what it *means* (is it an exit, is it on the floor, is it blocked).
 
 **A simpler option.** `--no-yoloe` runs LocateAnything + Qwen only
-(`python exit_monitor.py <video> --no-yoloe`). Results are more accurate per update
+(`python run.py exits <video> --no-yoloe`). Results are more accurate per update
 but ~1–2 s old, and IDs are less stable on fast camera moves. It is a good starting
 point when a 2 s update interval is acceptable (a walkthrough inspection, not alarms)
 or when you do not want to install YOLOE. Compare the two on the same video.
@@ -103,14 +106,20 @@ or when you do not want to install YOLOE. Compare the two on the same video.
 ## Repository layout
 
 ```
-exit_monitor.py      MAIN: YOLOE + LocateAnything + Qwen, exit memory, panel, report
-extinguisher_monitor.py  fire extinguishers: YOLOE + Qwen reads the expiry / service date (CLI)
-locate_live.py       LocateAnything (+ optional Qwen assist) live, position rule
-live_infer.py        Qwen-only live (prompt → boxes + status); --delay buffered mode
-video_infer.py       Qwen-only offline: process a recorded video, side-by-side output
-yoloe_infer.py       YOLOE-only live (local, no server)
-bench_latency.py     Benchmark a VLM endpoint (TTFT, latency, throughput)
-locate_test.py       Run LocateAnything on sampled frames, save an annotated grid
+run.py               the single entry point: python run.py <command> [options]
+config.toml          settings for python run.py inspect (frame rates, resolution, models, rules, output)
+
+apps/                the programs (run.py command in brackets)
+  fire_safety_inspection.py  [inspect] exits + extinguishers on the same frames, one report
+  exit_monitor.py      [exits] MAIN: YOLOE + LocateAnything + Qwen, exit memory, panel, report
+  extinguisher_monitor.py  [extinguishers] YOLOE + Qwen reads the expiry / service date
+  locate_live.py       [locate-live] LocateAnything (+ optional Qwen assist) live, position rule
+  live_infer.py        [live] Qwen-only live (prompt → boxes + status); --delay buffered mode
+  video_infer.py       [video] Qwen-only offline: process a recorded video, side-by-side output
+  yoloe_infer.py       [yoloe] YOLOE-only live (local, no server)
+  bench_latency.py     [bench] benchmark a VLM endpoint (TTFT, latency, throughput)
+  locate_test.py       [locate-test] LocateAnything on sampled frames, annotated grid
+  camera_check.py      [camera-check] camera / stream without models: fps, drops, latency clock
 
 core/                shared library (no entry points)
   config.py          .env loading, VLM provider presets
@@ -122,14 +131,14 @@ core/                shared library (no entry points)
   qwen_detect.py     one full-frame Qwen detection call
   qwen_assist.py     Qwen naming objects for LocateAnything + depth check
   labels.py          LocateAnything categories
-  video_io.py        LiveSource (file paced as live / webcam / RTSP), camera motion
+  video_io.py        LiveSource (file paced as live; webcam / stream: newest frame, reconnect), camera motion
   drawing.py         boxes, banner, captions
   stream_view.py     MJPEG browser view (--stream)
 engines/
   qwen_engine.py     OpenAI-compatible VLM client (vLLM, OpenRouter, DashScope, OpenAI)
   locate_engine.py   LocateAnything server client + answer parser
 server/              GPU-server scripts: start_all.sh / status.sh / stop_all.sh, setup, serve
-tests/test_core.py   offline tests for parsing / rules / LocateAnything output
+tests/test_core.py   offline tests for parsing / rules / LocateAnything output / live input
 backend/             FastAPI service: live mode (frames in, boxes out), sessions, token auth
 frontend/            web app (index.html, style.css, app.js) — talks to backend/
 ```
@@ -151,7 +160,7 @@ cd htx_demo
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.sample .env          # then fill in the server addresses
-.venv/bin/python tests/test_core.py    # offline sanity check: should print 13/13 passed
+.venv/bin/python tests/test_core.py    # offline sanity check: should print 16/16 passed
 ```
 
 The first YOLOE run downloads `yoloe-11s-seg.pt` and the MobileCLIP text encoder
@@ -197,6 +206,15 @@ bash server/stop_all.sh           # stop everything   (or: stop_all.sh backend)
 tmux attach -t backend            # watch a service (Ctrl+B then D to leave)
 ```
 
+**Single 8 GB GPU (e.g. an RTX 4060 laptop running everything itself).** LocateAnything-3B
+(~7.7 GB of weights) and Qwen-4B (~8.9 GB) don't fit, so `start_all.sh` can't be used.
+Serve Qwen3-VL-2B alone, sized to leave room for YOLOE, and run the monitors on the same
+machine with `QWEN_URL=http://localhost:8000/v1` and no `LOCATE_URL`:
+
+```bash
+bash server/start_laptop.sh       # Qwen3-VL-2B in tmux 'qwen' on :8000; start before the monitors
+```
+
 The sections below are the same steps done manually.
 
 Each model gets its **own Python environment** (their pinned packages conflict).
@@ -228,7 +246,7 @@ bash server/serve_locate.sh               # GPU 1 by default, port 8020+ (first 
 Endpoints: `GET /health`, `POST /detect {image, categories, mode}`,
 `POST /ground {image, phrase}`. Boxes come back on a 0–1000 scale.
 
-**Backend for the web app** — see [Backend + web app](#backend--web-app-backend-frontend):
+**Backend for the web app** — see [Backend + web app](docs/running.md#backend--web-app-backend-frontend):
 `BACKEND_TOKEN=<secret> bash server/run_backend.sh` (in tmux, after `setup_monitor.sh`).
 
 **Optional — run the monitor on the server too**
@@ -265,728 +283,154 @@ If the ports are not reachable from the client, tunnel them:
 
 ## Running
 
-### Main: `exit_monitor.py`
+Every program starts from `run.py` in the project root (`python run.py` lists them). This
+section covers the main one, the **fire safety inspection**. Each monitor on its own, the
+backend and web app, the simpler runners, the live camera and the tools are in
+**[docs/running.md](docs/running.md)**.
+
+### Fire safety inspection: `python run.py inspect`
+
+The inspection runs the exit monitor and the extinguisher monitor on the same frames,
+from one camera or video. Each frame goes through both. They share one view, one event
+log and one report.
+
+**1. Start Qwen.** On the 8 GB laptop, do this once per session; it takes about a minute:
 
 ```bash
-.venv/bin/python exit_monitor.py IMG_0451.MOV            # URLs from .env
-.venv/bin/python exit_monitor.py IMG_0451.MOV --loop --save results/run.mp4
-.venv/bin/python exit_monitor.py IMG_0451.MOV --no-yoloe # LocateAnything + Qwen only
-.venv/bin/python exit_monitor.py IMG_0451.MOV --no-display --stream   # browser :8090
+bash server/start_laptop.sh       # serves [models] qwen_model from config.toml (2b); prints QWEN_URL
 ```
 
-Window: original | annotated video, and a panel listing each exit (status, for how
-long, blockers) plus the latest events. Keys: `q`/`Esc` quit, `space` pause.
+`QWEN_URL` in `.env` must match the printed URL (`http://localhost:8000/v1`). On the GPU
+server, `bash server/start_all.sh` starts Qwen-4B and LocateAnything instead (see
+[Setup](#setup)); set `qwen_model = "4b"` there.
 
-| Option | Default | Meaning |
-|---|---|---|
-| `--locate-url`, `--qwen-url` | from `.env` | model servers (either can be omitted) |
-| `--no-yoloe` | off | no per-frame detector; tracks come from LocateAnything only |
-| `--la-interval` | 1.0 s | minimum gap between LocateAnything calls |
-| `--name-every` | 3.0 s | how often Qwen names objects at the door |
-| `--hold` | 1.5 s | a new status must hold this long before it is shown |
-| `--recheck` | 8.0 s | re-ask Qwen for a verdict at least this often per exit |
-| `--verdict-ttl` | 6.0 s | how long a Qwen verdict counts |
-| `--confirm-timeout` | 6.0 s | show a door's status without Qwen's exit confirmation after this |
-| `--proc-width` | 960 | processing width in px |
-| `--quiet` | off | no per-frame log line |
-| `--stream [PORT]`, `--save FILE`, `--loop`, `--no-display`, `--out-dir` | | output options |
-
-**Terminal log** – one line per processed frame, plus events:
-
-```
-f   98 t=  3.27s   76ms | YOLOE  8 det  54ms | LA: result back: 21 boxes (2.2s); sent frame; merged 21 boxes | Qwen: -> depth#24 -> verdict#9 | tracks: 2 door, 16 obstacle
-f  137 t=  4.57s   73ms | YOLOE  7 det  69ms | LA: - | Qwen: <- confirm#9=yes | tracks: 3 door, 12 obstacle
-[   4.8s] EXIT #9: CHECKING -> BLOCKED (chair, stool, cardboard box x4)
-```
-
-`->` = a Qwen job started (`confirm` = is it an exit, `depth` = floor or raised,
-`verdict` = C/P/B), `<-` = its answer. LocateAnything runs back to back: it sends the
-newest frame as soon as the previous answer is back (and `--la-interval` has passed).
-
-**Output** – `results/exit_monitor_<video>/report.json` (status history, blockers and a
-snapshot per exit, all events) and `exit<id>_<time>_<status>.jpg` snapshots.
-
-### Backend + web app (`backend/`, `frontend/`)
-
-The detection pipeline runs as a **FastAPI service on the GPU server** (API only). The
-web app is hosted **separately**, on whatever machine you like, and connects to the
-backend with its address and token. The detection code is the same as `exit_monitor.py`.
-
-**Live mode (default).** The video plays **in the browser**, from a local file or the
-camera. The web app sends small JPEG frames (960 px wide) to the server over one
-WebSocket; the server sends back **only JSON**: exit and obstruction boxes, statuses and
-events. The browser draws the boxes over its own video, so playback never waits for the
-network. It keeps one frame in flight at a time (at most 15 per second), so frames never
-queue up. On the same network, expect a round trip of about 50–70 ms, or about 13–15
-results per second.
-
-```
-Browser:     video ─► JPEG frames ──WS /api/live──►  GPU server: backend (FastAPI, :8100)
-             boxes ◄── JSON (boxes, statuses) ◄──     └─ YOLOE + LocateAnything + Qwen
-```
-
-**On the server:** run `bash server/start_all.sh`. It starts Qwen, LocateAnything and
-the backend, and prints the backend port and token. To start only the backend, run
-`bash server/run_backend.sh`.
-
-**Host the web app** on any machine with Python 3 (it is static files only):
+**2. Run it:**
 
 ```bash
-bash frontend/serve.sh                  # http://localhost:5173
-# no bash (e.g. Windows): python -m http.server 5173 --bind localhost -d frontend
+python run.py inspect IMG_0451.MOV                          # a video, played as if live
+python run.py inspect rtsp://<windows-host>:8554/live/x2    # the Pocket 3 via MediaMTX
+python run.py inspect 0                                     # a USB webcam
+python run.py inspect IMG_0451.MOV --save results/inspection.mp4 --no-display
+python run.py inspect IMG_0451.MOV --process-fps 10 --proc-width 640
+python run.py inspect IMG_0451.MOV --set exits.fps=5 --set extinguishers.today=2026-12-01
+python run.py inspect IMG_0451.MOV --only extinguishers --stream     # browser view on :8090
+python run.py inspect IMG_0451.MOV --yoloe 11l --qwen 2b-fp8         # other models
+python run.py inspect --list-models
 ```
 
-Open `http://localhost:5173`, enter the **Backend URL** (`http://<server-ip>:<port>`) and
-the **Token**, then click **Connect**. Pick a **mode**, then **Open video** (or
-**Camera**), then **Start detection**:
+The window shows the original next to the annotated frame (both overlays), then the exit
+panel and the extinguisher panel. Each panel header names the models in use, for example
+`[YOLOE-11s + Qwen3-VL-2B]`. Keys: `q` or `Esc` quits, `space` pauses. Camera setup
+(MediaMTX, DJI Mimo, WSL networking) is in [docs/live-camera.md](docs/live-camera.md).
 
-| Mode | What it does | Models | Frames sent |
+#### Settings: `config.toml`
+
+Every setting is commented in the file. Settings left out use their defaults.
+
+| Section | What it sets |
+|---|---|
+| `[input]` | `source`, `loop`, `camera_size` (asked of a webcam), `stream_timeout` |
+| `[processing]` | `process_fps` (see below) and `proc_width`, the processing width for tracking and drawing |
+| `[models]` | YOLOE and Qwen model (see [Choosing models](#choosing-models)); Qwen and LocateAnything on/off and their URLs (default: `.env`) |
+| `[exits]`, `[extinguishers]` | `enabled`; `fps` (see below); `imgsz`, the YOLOE input size; plus any option of that monitor, named as in its `--help` with `-` → `_` (`hold`, `min_px`, `soon_days`, `today`, …) |
+| `[output]` | window, `show_original`, `view_width`, `save`, `stream`, snapshots, per-frame log, `out_dir` |
+
+**Two frame rates.** `[processing] process_fps` sets how many frames per second the whole
+loop takes from the source. The window, stream and saved video update at that rate, and
+no task sees the frames in between. `[exits] fps` and `[extinguishers] fps` cap one task
+within those frames. On a frame the task skips, the frame is still shown and the other
+task still runs, and the skipped task's boxes stay where they were. For example,
+`process_fps = 20` with `extinguishers.fps = 5` updates the view 20 times a second and
+checks exits on every frame, but extinguishers on only 5 of them. `0` means no cap.
+
+The command line wins over the file:
+
+| Option | Sets |
+|---|---|
+| `source` | `[input] source` |
+| `--process-fps N`, `--proc-width PX` | `[processing]` |
+| `--yoloe NAME`, `--qwen NAME` | `[models] yoloe_model`, `qwen_model` |
+| `--only exits` / `--only extinguishers` | turns the other task off |
+| `--save FILE`, `--stream [PORT]`, `--no-display`, `--quiet`, `--loop` | `[output]` / `[input]` |
+| `--set SECTION.KEY=VALUE` | anything else (repeatable) |
+| `--config FILE` | another settings file |
+| `--list-models` | prints the model choices and exits |
+
+Unknown settings and wrong types stop the run with a list of the valid names.
+
+#### Choosing models
+
+Choosing a model is optional: by default the inspection uses YOLOE-11s and
+Qwen3-VL-2B-Instruct, the models this laptop runs now. To test others, set
+`yoloe_model` and `qwen_model` in `config.toml`, or pass `--yoloe` and `--qwen`.
+`python run.py inspect --list-models` shows the choices, which YOLOE weights are already
+downloaded, and which Qwen model the server serves now.
+
+| YOLOE (`yoloe_model`, `--yoloe`) | |
+|---|---|
+| `11s` (default), `11m`, `11l` | YOLOE-11 |
+| `v8s`, `v8m`, `v8l` | YOLOE-v8 |
+| `26n`, `26s`, `26m`, `26l`, `26x` | YOLOE-26 |
+
+Within a family, a bigger model (n < s < m < l < x) is slower and finds more. The first
+run with a model downloads it into `models/`. The first YOLOE-26 run also downloads its
+text encoder (`mobileclip2_b.ts`, 240 MB). Both tasks use the same YOLOE model, each as
+its own instance.
+
+| Qwen3-VL (`qwen_model`, `--qwen`) | Hugging Face repo | Weights | 8 GB laptop |
 |---|---|---|---|
-| **Exit obstruction** | exits and what blocks them (`exit_monitor.py`) | YOLOE + LocateAnything + Qwen | 960 px, JPEG 0.75 |
-| **Fire extinguisher** | extinguishers and their expiry or service date (`extinguisher_monitor.py`) | YOLOE + Qwen | 1920 px, JPEG 0.9 |
+| `2b` (default) | `Qwen/Qwen3-VL-2B-Instruct` | 4.3 GB | yes |
+| `2b-fp8` | `Qwen/Qwen3-VL-2B-Instruct-FP8` | 3.5 GB | yes |
+| `4b` | `Qwen/Qwen3-VL-4B-Instruct` | 8.9 GB | no |
+| `4b-fp8` | `Qwen/Qwen3-VL-4B-Instruct-FP8` | 6.0 GB | no |
+| `8b` | `Qwen/Qwen3-VL-8B-Instruct` | 17.5 GB | no |
+| `8b-fp8` | `Qwen/Qwen3-VL-8B-Instruct-FP8` | 10.6 GB | no |
 
-The server tells the browser which frame size to send. Extinguisher mode needs full
-resolution to read the sticker, so it uses about 4× the bandwidth (fine on a LAN). If
-you switch mode while detecting, the app reconnects in the new mode.
+Repo names such as `qwen3-vl-4b-instruct` work too, and `qwen_model = ""` uses whatever
+the server serves. The list has Instruct models only. The Thinking variants reason at
+length before answering, which would cut off the one-word answers the monitors ask for.
 
-**Right side in Fire extinguisher mode (live):**
-
-- **A card per extinguisher seen:**
-  - last service, next service and expiry ("not on tag" when missing);
-  - valid until, and why;
-  - a **SAFE TO USE / SAFE · SERVICE DUE SOON / NOT SAFE · OVERDUE / CHECK MANUALLY /
-    TAG NOT READ** badge;
-  - how many reads agree. A "?" means it is not confirmed yet.
-- **The checklist ticks itself:** extinguishers present, service tag readable, service
-  date not overdue (red if one is overdue). "Mounted and unobstructed" is still a mockup.
-- **The pop-up shows each status change.**
-
-In exit mode, the right side is still a mockup.
-
-- **Status line:** which models are in use, results per second, round-trip time
-  (and the server's share of it), exit or extinguisher statuses, and the last event.
-- **Down model servers:** a server that is down is skipped and reported, rather than
-  failing the session.
-- **New video:** opening another video resets the exit memory on the server.
-- **Left side:** the original video, and the video with bounding boxes.
-- **Right side:** the checklist, pop-up and chat are a *mockup only* for now. Live events
-  already arrive (`onEvent` in `frontend/app.js`), ready to wire up.
-
-Notes:
-
-- **Playing `.MOV` files:** iPhone `.MOV` files (HEVC) play in Safari and Chrome on
-  macOS; other browsers / systems may not. If a browser can't play a file, convert it first:
-  `ffmpeg -i in.MOV -c:v libx264 -pix_fmt yuv420p out.mp4`.
-- **Camera:** the browser allows camera access only on `https://` or `localhost`. Use
-  the web app on `localhost` (`frontend/serve.sh` does by default), or serve it over https.
-- **Unreachable port:** if the server port can't be reached from your computer, tunnel it with
-  `ssh -L 8100:localhost:8100 <user>@<server>` and use `http://localhost:8100`.
-
-**Server-video sessions (older mode).** In this mode the server reads a video from its
-own disk and streams MJPEG frames back (`/api/sessions…` below). It is useful for
-recording and reports, but it lags over a slow link.
-
-**Building your own app** (Android, another web app, a script): the full API, with
-request and response examples, is in [Backend API reference](#backend-api-reference).
-
-| Setting (env / `.env` on the server) | Default | |
-|---|---|---|
-| `BACKEND_TOKEN` | *(none)* | shared secret: `Authorization: Bearer <token>` or `?token=` — **set it** |
-| `BACKEND_CORS_ORIGINS` | `*` | origins allowed to call the API, e.g. `http://localhost:5173` |
-| `BACKEND_VIDEO_DIR` | repo root | where session videos are read from |
-| `BACKEND_MAX_SESSIONS` | `1` | concurrent sessions, live ones included (one GPU pipeline) |
-| `LOCATE_URL`, `QWEN_URL` | from the port files | model servers (localhost on the server) |
-
-`exit_monitor.py --stream` still works for quick checks: an all-in-one browser view
-(`/stream`), plus `/stream/original`, `/stream/annotated` and `/state`.
-
-### Fire extinguishers: `extinguisher_monitor.py` (CLI, first version)
-
-This tool finds fire extinguishers and reads the expiry or service date on their label
-or inspection tag. It needs only YOLOE and the Qwen server; LocateAnything is not used.
+The Qwen server serves one model at a time, so changing the Qwen model means restarting
+the server:
 
 ```bash
-.venv/bin/python extinguisher_monitor.py IMG_0454.MOV            # video (QWEN_URL from .env)
-.venv/bin/python extinguisher_monitor.py tag.jpg                 # a photo, or a folder of photos
-.venv/bin/python extinguisher_monitor.py IMG_0454.MOV --no-qwen  # detection only
+bash server/start_laptop.sh 2b-fp8      # stops the running model, starts this one (~1 min;
+                                        # the first start also downloads it)
+python run.py inspect IMG_0451.MOV --qwen 2b-fp8
 ```
 
-How it works:
+The inspection checks that the server serves the chosen model and, if not, prints the
+command to switch it. `start_laptop.sh` refuses models that don't fit in its share of the
+GPU before it stops the running one. On this laptop that leaves the two 2B models. For
+4B and 8B, run `bash server/serve_qwen.sh 4b` on the GPU server and point `qwen_url` (or
+`QWEN_URL`) at it.
 
-1. **Detect and track.** YOLOE finds each extinguisher and the tracker gives it an ID
-   that stays stable, even while you walk up to it.
-2. **Keep the best view.** The tool keeps the best crop of each extinguisher, taken
-   from the full-resolution frame and scored on size × sharpness. Extinguishers
-   narrower than `--min-px` (default 120 px) are not read; the label says "move closer".
-3. **Read in two steps,** in the background:
-   - **Locate:** Qwen finds the dated sticker or tag on the crop.
-   - **Read:** a tight crop of the sticker, upscaled to about 1000 px, is read. Qwen
-     only copies each date and the words printed next to it
-     (`DATE JUNE-2027 | NEXT RECOMMENDED SERVICING`).
+#### Output
 
-   The code then decides what kind of date it is from those words: next service,
-   last service, expiry, manufacture date or unknown. A 4B model mixes up "next" and
-   "last" when asked to decide, and misreads digits when the sticker is only about
-   100 px wide.
-4. **Vote.** While the extinguisher is close, it keeps reading new views, 2 at a time
-   (`--parallel`). It stops once two reads give the same due date; until then the
-   status is shown with a "?" and marked "unconfirmed". The usual misread digits
-   (2026 → 2024) get outvoted.
+The log prints one line per frame, with the `EXITS …` and `EXT …` parts separated by
+`||`, plus events. Reports go to `results/fire_safety_<video>/`:
 
-In photo mode, if no extinguisher is detected, the whole photo is read as a close-up of
-the tag.
+- `report.json`: summary counts, all exits, all extinguishers, one event log tagged by
+  task, the models and the settings used;
+- `exits/` and `extinguishers/`: each task's own report and snapshots.
 
-| Status | When |
-|---|---|
-| **VALID** | due date later than `--soon-days` (30) from today |
-| **DUE SOON** | due within `--soon-days` |
-| **EXPIRED** | due date passed |
-| **CHECK DATE** | dates read, but none says what it means |
-| **UNREADABLE** | no date readable (`too_small`, `blurry`, `no_tag`) |
+Photos still go through `python run.py extinguishers` ([docs/running.md](docs/running.md)).
 
-How the due date is worked out:
+There are two YOLOE models rather than one with both prompt lists. YOLOE gives each box
+its single best-scoring prompt, so the extinguisher decoys ("red bag", "red trash can")
+would take obstacle boxes away from the exit rule.
 
-- An expiry or next-service date is used as written.
-- A last-service date alone gets `--service-months` (12) added.
-- A manufacture date gets `--life-years` (10) added, and the earliest limit wins.
-- A "last service" date in the future must be the next-service date (the words were
-  attached to the wrong date), so it is treated as one.
-- A date with only a month counts until the end of that month.
-- Dates are read day-first unless you pass `--monthfirst`.
-- `--today YYYY-MM-DD` sets "today", for testing.
-
-Each run writes `results/extinguisher_<video>/report.json`. It holds every read (Qwen's
-raw answer, the dates and the crop file) and the final status of each extinguisher. The
-run also saves each extinguisher crop, the sticker crops Qwen read (`*_tag1.jpg`) and a
-scene snapshot.
-
-Results with Qwen3-VL-4B on the walk-by videos, at about 1.5 s per read:
-
-| Video | Result |
-|---|---|
-| `IMG_0454`, `IMG_0456` | **VALID**, due 06/2027 (next service), confirmed |
-| `IMG_0453` | **UNREADABLE**: the sticker never faces the camera |
-
-A date is read only when the sticker is close (the extinguisher fills about a third or
-more of the frame height). A second or two of steady view is enough.
-
-### Other runners
-
-| Script | What it does | Example |
-|---|---|---|
-| `locate_live.py` | LocateAnything every ~1.5–2 s + position rule; `--qwen-url` adds Qwen naming + depth check | `python locate_live.py IMG_0451.MOV --url http://<srv>:8020 --qwen-url http://<srv>:8010/v1` |
-| `live_infer.py` | Qwen detects exits + obstructions from the prompt; results shown live, boxes motion-compensated | `python live_infer.py IMG_0451.MOV --provider local --interval 0.2 --workers 4` |
-| `live_infer.py --delay N` | buffered: plays N s behind live so every frame has a fresh result | `python live_infer.py IMG_0451.MOV --provider local --delay 4` |
-| `video_infer.py` | offline: parallel calls over a recorded video → side-by-side mp4 + JSON | `python video_infer.py IMG_0450.MOV --provider local --play` |
-| `yoloe_infer.py` | YOLOE + position rule only, no server | `python yoloe_infer.py IMG_0450.MOV` |
-
-`--provider` for the Qwen runners: `local` (your vLLM server, from `LOCAL_VLM_URL`),
-`openrouter` (default, `qwen/qwen3-vl-8b-instruct`), `qwen` (DashScope), `openai`.
-All live runners accept `--stream`, `--save`, `--loop`, `--no-display`.
-
-### Tools
-
-```bash
-python bench_latency.py IMG_0450.MOV --provider local --sizes 448 640 --concurrency 1 4 8
-python locate_test.py IMG_0450.MOV --url http://<srv>:8020 --mode fast
-python tests/test_core.py
-bash server/run_realtime_test.sh IMG_0450.MOV   # on the server: benchmark + live run + verdict
-bash server/watch_live.sh IMG_0450.MOV          # on the server: live_infer → browser
-```
+Measured on the dev laptop (RTX 4060 8 GB, YOLOE-11s + Qwen3-VL-2B, 800×448 test clip):
+about 42 ms per frame with both tasks, against about 29 ms for exits alone. That is about
+23 fps, so a 25–30 fps camera drops some frames. GPU memory peaked at 7.2 of 8 GB.
 
 ---
 
 ## Backend API reference
 
-This section is for anyone building their own client on the backend: a web app, an
-Android or iOS app, a script. The web app in `frontend/` is one such client; its
-[app.js](frontend/app.js) is a working example of everything below.
-
-### Overview
-
-The backend offers two ways to work:
-
-| | **Live mode** (recommended) | **Server-video sessions** |
-|---|---|---|
-| Video comes from | **your app**: camera or file, sent frame by frame | a file or `rtsp://` stream **on the server** |
-| You get back | JSON only: boxes, statuses, events | MJPEG video streams + JSON state/events |
-| Modes | `exits` and `extinguisher` | `exits` only |
-| Endpoint | `WS /api/live` | `/api/sessions…` |
-| Latency | ~50–80 ms per frame on a LAN | depends on the link; video lags over slow networks |
-
-A typical live-mode app does this:
-
-```
-GET  /api/health                       is the backend there? does it need a token?
-GET  /api/info                         which model servers are up, which modes exist
-WS   /api/live?token=…                 open one WebSocket
-  → {"type":"start","mode":"extinguisher"}
-  ← {"type":"ready", "send_width":1920, "jpeg_quality":0.9, …}
-  loop while the camera runs:
-    → binary frame (12-byte header + JPEG)
-    ← {"type":"result", "extinguishers":[…], "events":[…], …}   draw it, then send the next frame
-  → {"type":"stop"}  (or just close the socket)
-```
-
-### Basics
-
-**Base URL:** `http://<server-ip>:<port>`, or `ws://` for WebSockets. The port is
-the one `server/start_all.sh` prints (usually `8100`). The interactive OpenAPI docs
-for the REST endpoints are at `/docs`.
-
-**Auth:** if the server has `BACKEND_TOKEN` set (the default after `start_all.sh`),
-every call except `/api/health` needs the token:
-
-- REST: header `Authorization: Bearer <token>` (or `?token=<token>`).
-- WebSocket: `?token=<token>` in the URL. Browsers can't set headers on WebSockets,
-  so only the query form works.
-- A wrong or missing token gets **401** `{"detail": "missing or wrong token"}`
-  (REST). On a WebSocket, the handshake is refused: most clients report **HTTP 403**.
-
-**Errors:** REST errors are JSON `{"detail": "<message>"}` with the usual status
-codes (400, 401, 404, 409, 500, 501).
-
-**CORS:** all origins are allowed by default (`BACKEND_CORS_ORIGINS`), so browser apps
-on any host can call the API.
-
-**Coordinates:** every `box` is `[x1, y1, x2, y2]` as **fractions of the frame (0–1)**,
-origin top-left. To draw one, multiply by the width and height of the image as it is
-shown on screen. If you letterbox the video, add the offset.
-
-**One pipeline:** the GPU server runs `BACKEND_MAX_SESSIONS` sessions at a time
-(default **1**), and live connections count. A second client is refused until the
-first one stops.
-
-### REST endpoints
-
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| GET | `/api/health` | no | liveness; whether a token is needed |
-| GET | `/api/info` | yes | model servers, live modes, videos, running sessions |
-| GET | `/api/videos` | yes | videos a server-video session can play |
-| POST | `/api/sessions` | yes | start a server-video session |
-| GET | `/api/sessions` | yes | all server-video sessions |
-| GET | `/api/sessions/{id}` | yes | one session: status + latest state |
-| DELETE | `/api/sessions/{id}` | yes | stop a session (its report is written) |
-| GET | `/api/sessions/{id}/report` | yes | the session's report, after it ended |
-| GET | `/api/sessions/{id}/stream/{name}` | yes | MJPEG video: `original`, `annotated`, `combined` |
-| WS | `/api/sessions/{id}/events` | yes | pushed events + state for a session |
-| POST | `/api/sessions/{id}/command` | yes | chat / commands: **not implemented yet (501)** |
-| WS | `/api/live` | yes | **live mode** (next section) |
-
-#### `GET /api/health`
-
-```json
-{"ok": true, "auth_required": true}
-```
-
-#### `GET /api/info`
-
-```json
-{
-  "models": {
-    "locate_anything": {"url_set": true, "up": true},
-    "qwen":            {"url_set": true, "up": true}
-  },
-  "modes": [
-    {"id": "exits",        "title": "Exit obstruction"},
-    {"id": "extinguisher", "title": "Fire extinguisher"}
-  ],
-  "videos": ["IMG_0450.MOV", "IMG_0451.MOV"],
-  "max_sessions": 1,
-  "sessions": [],
-  "live_sessions": [{"id": "8eaf56cb", "mode": "exits", "frames": 240}]
-}
-```
-
-- `models.*.up`: whether that model server answers right now. Live mode skips a model
-  that is down rather than failing.
-  - Exit mode needs YOLOE, which always runs in the backend; LocateAnything and Qwen
-    make it better.
-  - Extinguisher mode needs **Qwen** to read dates; without it, extinguishers are only
-    detected.
-- `modes`: use `id` in the live `start` message and `title` in your UI.
-- `sessions`: server-video sessions, in the [session object](#session-object) format.
-  `live_sessions`: live connections.
-
-#### `GET /api/videos`
-
-```json
-{"videos": ["IMG_0450.MOV", "IMG_0451.MOV", "IMG_0452.MOV"]}
-```
-
-These are files in the server's `BACKEND_VIDEO_DIR` (`.mov .mp4 .avi .mkv .m4v`).
-
-#### `POST /api/sessions`: start a server-video session (exit mode)
-
-Request body (JSON):
-
-| Field | Type | Default | |
-|---|---|---|---|
-| `source` | string | *required* | a name from `/api/videos`, or an `rtsp://` / `rtmp://` / `http(s)://` stream URL |
-| `loop` | bool | `true` | restart the file at the end |
-| `use_yoloe` | bool | `true` | per-frame detector |
-| `use_locate` | bool | `true` | LocateAnything |
-| `use_qwen` | bool | `true` | Qwen checks |
-| `options` | object | `{}` | `hold`, `la_interval`, `name_every`, `recheck`, `confirm_timeout` (seconds; see `exit_monitor.py --help`) |
-
-```json
-{"source": "IMG_0452.MOV", "loop": false}
-```
-
-The response is **201** with the [session object](#session-object). Errors:
-
-- **400:** `{"detail": "video not found: …"}`, or a path outside the video folder.
-- **409:** `{"detail": "already running: <id> (max 1) — stop it first"}`.
-
-#### Session object
-
-Returned by `GET /api/sessions/{id}`, `POST`, `DELETE` and in lists:
-
-```json
-{
-  "id": "f986678d",
-  "source": "IMG_0452.MOV",
-  "status": "running",
-  "error": null,
-  "created": 1792210042.55,
-  "loop": false,
-  "models": {"yoloe": true, "locate_anything": true, "qwen": true},
-  "events": 1,
-  "state": {
-    "video_time_s": 9.93,
-    "fps": 16.2,
-    "exits": [
-      {"id": 73, "exit_sign": true, "status": "partially_obstructed", "status_text": "PARTIAL",
-       "since_s": 0.0, "blockers": ["office chair"], "visible": true}
-    ],
-    "events": [
-      {"video_time_s": 9.93, "text": "EXIT #73: CHECKING -> PARTIAL (office chair)",
-       "status": "partially_obstructed"}
-    ]
-  },
-  "report_ready": false
-}
-```
-
-- `status`: `starting` → `running` → `finished` | `stopped` | `error` (then `error`
-  has the reason).
-- `state`: the latest snapshot (empty `{}` until the first frame). `state.events` is
-  the last 20.
-- Exit `status` values are listed in [exit statuses](#exit-mode-result).
-- `DELETE` asks the session to stop and returns at once. `status` turns `stopped` a
-  moment later, and then `report_ready` is `true`.
-
-#### `GET /api/sessions/{id}/report`
-
-You get **409** until the session has ended. Afterwards:
-
-```json
-{
-  "source": "IMG_0452.MOV", "frames": 243, "dropped": 168, "fast_loop_ms": 77.6,
-  "exits": [
-    {"id": 58, "final_status": "clear", "blockers": [], "first_seen_s": 5.73, "last_seen_s": 8.07,
-     "history": [{"video_time_s": 8.0, "status": "clear", "blockers": []}],
-     "snapshot": "exit58_0008.0s_clear.jpg"}
-  ],
-  "events": [{"video_time_s": 8.0, "event": "door #58: CHECKING -> CLEAR"}]
-}
-```
-
-#### `GET /api/sessions/{id}/stream/{original|annotated|combined}`
-
-This is an MJPEG stream (`multipart/x-mixed-replace`). In a browser use
-`<img src=".../stream/annotated?token=…">`; on Android, use any MJPEG viewer. The
-stream ends when the session ends.
-
-#### `WS /api/sessions/{id}/events?token=…`
-
-The server pushes these messages; the client sends nothing:
-
-```json
-{"type": "hello", "session": { …session object… }}
-{"type": "event", "event": {"video_time_s": 9.93, "exit_id": 73, "exit_sign": true,
-                            "from": "unknown", "to": "partially_obstructed", "status_text": "PARTIAL",
-                            "blockers": ["office chair"], "text": "EXIT #73: CHECKING -> PARTIAL (office chair)",
-                            "seq": 0}}
-{"type": "state", "status": "running", "state": { …as in the session object… }}
-{"type": "end", "session": { …session object… }}
-```
-
-- `event` is sent on every exit status change.
-- `state` is sent every 0.5 s.
-- `end` is sent once, then the socket closes.
-- Close code `4401` means a wrong token; `4404` means an unknown session.
-
-### Live mode: `WS /api/live`
-
-#### Connect and start
-
-```
-ws://<server-ip>:<port>/api/live?token=<token>
-```
-
-The **first message** must be a text (JSON) `start`:
-
-```json
-{"type": "start", "mode": "extinguisher"}
-```
-
-| Field | Type | Default | |
-|---|---|---|---|
-| `type` | `"start"` | *required* | |
-| `mode` | `"exits"` \| `"extinguisher"` | `"exits"` | what to detect (ids from `/api/info`) |
-| `use_yoloe` | bool | `true` | exits mode only |
-| `use_locate` | bool | `true` | exits mode only: LocateAnything |
-| `use_qwen` | bool | `true` | both modes: Qwen (extinguisher dates need it) |
-| `options` | object | `{}` | per mode, see below |
-
-`options` per mode:
-
-- **`exits`** (floats, seconds): `hold` (1.5), `la_interval` (1.0), `name_every` (3),
-  `recheck` (8), `confirm_timeout` (6).
-- **`extinguisher`:**
-  - `min_px` (120): extinguishers narrower than this in your frame aren't read.
-  - `max_reads` (5) and `parallel` (2): how many reads, and how many at once.
-  - `soon_days` (30): how near the due date counts as "due soon".
-  - `service_months` (12): how long a service lasts when only the last-service date
-    is known.
-  - `life_years` (10): service life from the manufacture date.
-  - `monthfirst` (false): read `05/06/2027` as month/day.
-
-The server replies **`ready`** (the first start takes a few seconds while models load):
-
-```json
-{
-  "type": "ready",
-  "id": "791214b4",
-  "mode": "extinguisher",
-  "models": {"yoloe": true, "locate_anything": false, "qwen": true},
-  "skipped": [],
-  "send_width": 1920,
-  "jpeg_quality": 0.9
-}
-```
-
-- `models`: what this session actually uses. `skipped` lists model servers that were
-  down and are therefore not used (e.g. `["Qwen"]`). Tell the user.
-- **`send_width` / `jpeg_quality`: send frames this wide (scale down, keep the aspect
-  ratio, never scale up) at this JPEG quality.**
-  - `exits`: 960 px at 0.75, about 50 KB per frame.
-  - `extinguisher`: 1920 px at 0.9, about 300 KB per frame. Full resolution is needed
-    to read the date on a sticker.
-
-If the start fails, you get `{"type": "error", "detail": "…"}` and the server closes
-the socket. Causes:
-
-- an unknown mode (`"ValueError: unknown mode 'x' — one of exits, extinguisher"`);
-- another session already running (`"SessionError: already running: <id> (max 1) — stop it first"`);
-- `"first message must be {type: start}"`.
-
-#### Send frames (binary messages)
-
-Each frame is **one binary WebSocket message**: a 12-byte little-endian header, then
-the JPEG file bytes.
-
-| Offset | Size | Type | Field |
-|---|---|---|---|
-| 0 | 4 | `uint32` LE | `seq`: your frame counter; echoed back in the result |
-| 4 | 8 | `float64` LE | `t`: video time in seconds (camera: seconds since start); echoed back |
-| 12 | … | bytes | a JPEG image (any size; colour) |
-
-```python
-# Python
-msg = struct.pack("<Id", seq, t) + jpeg_bytes
-```
-
-```js
-// JavaScript (browser)
-const msg = new Uint8Array(12 + jpeg.length);
-const v = new DataView(msg.buffer);
-v.setUint32(0, seq, true); v.setFloat64(4, t, true); msg.set(jpeg, 12);
-ws.send(msg.buffer);
-```
-
-```kotlin
-// Kotlin (Android, OkHttp)
-val buf = ByteBuffer.allocate(12 + jpeg.size).order(ByteOrder.LITTLE_ENDIAN)
-buf.putInt(seq).putDouble(t).put(jpeg)
-webSocket.send(ByteString.of(*buf.array()))
-```
-
-**Pacing: keep exactly one frame in flight.** Send a frame, wait for its `result`,
-then send the next one, capped at about 15 per second. The server processes frames in
-order, one at a time. If you send faster, frames queue up and the boxes fall behind
-the video. When the camera is paused, just stop sending.
-
-If the frame size changes (e.g. the camera rotates), the server starts tracking afresh
-automatically.
-
-#### Results
-
-Each frame gets exactly one reply:
-
-```json
-{"type": "result", "mode": "exits", "seq": 239, "t": 15.93, "proc_ms": 95.7, "yoloe_ms": 93.3,
- "locate_update": false, "events": [ … ], …mode-specific fields… }
-```
-
-| Field | |
-|---|---|
-| `seq`, `t` | echoed from your frame header. Match the result to the frame and measure the round trip |
-| `proc_ms` | server processing time for this frame |
-| `yoloe_ms` | detector time (part of `proc_ms`) |
-| `locate_update` | exits mode: LocateAnything boxes were merged in this frame |
-| `events` | **new** events since the previous result: `[{"video_time_s", "text", "status"}]`. Show them as notifications |
-
-A frame that can't be decoded returns `{"type": "error", "detail": "could not decode the JPEG"}`
-(or `"frame message too short"`), and **the session stays open**.
-
-#### Exit mode result
-
-```json
-{
-  "type": "result", "mode": "exits", "seq": 239, "t": 15.93, "proc_ms": 95.7, "yoloe_ms": 93.3,
-  "locate_update": false, "events": [],
-  "exits": [
-    {"id": 125, "exit_sign": false, "confirmed": null, "status": "partially_obstructed",
-     "status_text": "PARTIAL", "since_s": 0.5, "blockers": ["office chair x2"],
-     "box": [0.0, 0.0, 0.4899, 1.0]}
-  ],
-  "obstacles": [
-    {"id": 89, "label": "office chair", "depth": null, "exit_id": 125, "box": [0.0, 0.4899, 0.0581, 1.0]}
-  ]
-}
-```
-
-`exits[]`: the exits in view.
-
-| Field | |
-|---|---|
-| `id` | track ID, stable while the exit is followed |
-| `exit_sign` | an EXIT sign belongs to this door |
-| `confirmed` | Qwen says it is a real exit: `true`, `false`, or `null` (not asked yet / no Qwen) |
-| `status` / `status_text` | `unknown`/`CHECKING`, `clear`/`CLEAR`, `partially_obstructed`/`PARTIAL`, `obstructed`/`BLOCKED` |
-| `since_s` | seconds in this status |
-| `blockers` | names of what obstructs it |
-| `box` | 0–1 box |
-
-`obstacles[]`: the objects obstructing the exits in view.
-
-| Field | |
-|---|---|
-| `id`, `label`, `box` | as above |
-| `exit_id` | which exit it obstructs |
-| `depth` | `"floor"` if Qwen checked it stands on the floor, else `null` |
-
-The web app colours exits green (clear), amber (partial), red (blocked) and grey
-(checking), and draws obstacles in orange.
-
-#### Extinguisher mode result
-
-```json
-{
-  "type": "result", "mode": "extinguisher", "seq": 176, "t": 7.5, "proc_ms": 61.2, "yoloe_ms": 57.2,
-  "locate_update": false,
-  "events": [{"video_time_s": 7.5, "text": "EXTINGUISHER #1: VALID — due 06/2027 (next service; 2/2 reads agree)",
-              "status": "valid"}],
-  "extinguishers": [
-    {
-      "id": 1, "status": "valid", "status_text": "VALID",
-      "safe": true, "safe_text": "Safe to use",
-      "confirmed": true, "reading": false, "visible": true,
-      "due": "2027-06-30", "due_text": "06/2027", "basis": "next service",
-      "dates": {
-        "LAST_SERVICE": {"date": "2026-06-30", "text": "06/2026", "raw": "JUNE-2026", "precision": "month"},
-        "NEXT_SERVICE": {"date": "2027-06-30", "text": "06/2027", "raw": "JUNE 2027", "precision": "month"}
-      },
-      "dates_read": ["LAST_SERVICE JUNE-2026", "NEXT_SERVICE JUNE 2027"],
-      "reason": null, "reads": 4, "agree": 3, "hint": null,
-      "text": "VALID — due 06/2027 (next service; 3/4 reads agree)",
-      "box": [0.4135, 0.1009, 0.5606, 0.9054]
-    }
-  ],
-  "inventory": [ { …same fields, without "box"… } ]
-}
-```
-
-- **`extinguishers`**: the ones **in view**, with a `box`. Draw these on the video.
-- **`inventory`**: **every** extinguisher seen in this session, including those out of
-  view (`visible: false`). Use it for a list or summary screen.
-
-| Field | |
-|---|---|
-| `id` | track ID |
-| `status` | `reading` → `valid` \| `expiring_soon` \| `expired` \| `unclear` \| `unreadable` |
-| `status_text` | `READING`, `VALID`, `DUE SOON`, `EXPIRED`, `CHECK DATE`, `UNREADABLE` |
-| `safe` | **`true`** (valid, due soon), **`false`** (expired), **`null`** (unknown: reading, unclear, unreadable) |
-| `safe_text` | e.g. `"Safe to use"`, `"Safe to use — service due soon"`, `"Not safe — overdue"`, `"Unknown — tag not read"` |
-| `confirmed` | **two reads agree on the due date**. Until then, treat the status as provisional (the web app adds "?") |
-| `reading` | a read is in progress now |
-| `due` / `due_text` | the date the extinguisher stops being OK (ISO / display), or `null` |
-| `basis` | why: `"next service"`, `"expiry date"`, `"last service + 12 months"`, `"manufactured + 10 years"` |
-| `dates` | the dates read off the tag, by kind: `LAST_SERVICE`, `NEXT_SERVICE`, `EXPIRY`, `MANUFACTURED`, `UNKNOWN`. A kind that is missing was not on the tag. `date` is ISO; month-only dates count to the month's end. `text` is for display; `raw` is what was written |
-| `dates_read` | the same dates as short text, for logs |
-| `reason` | when `unreadable`: `no_tag`, `too_small`, `blurry` |
-| `reads` / `agree` | reads done / reads agreeing with `due` |
-| `hint` | a tip for the user: `"move closer"`, `"hold steady"`, or `null` |
-| `text` | one-line summary, ready to show |
-
-How a status develops:
-
-1. A new extinguisher starts as `reading`, with hint `"move closer"` while it's too
-   small.
-2. Once close enough, it is read, about 1.5 s per read.
-3. After the first read with a date, it shows a provisional status (`confirmed: false`).
-4. It becomes `confirmed: true` once two reads agree.
-5. Events are sent when the status, the due date or the confirmation changes.
-
-Colours used by the web app: green `valid`, amber `expiring_soon` / `unclear`, red
-`expired`, purple `unreadable`, grey `reading`.
-
-#### Other messages
-
-| You send (text JSON) | Server replies | |
-|---|---|---|
-| `{"type": "reset"}` | `{"type": "reset_done"}` | forget everything tracked (new video, new room). Send it when the user switches the source |
-| `{"type": "stop"}` | the socket closes | ends the session; the server writes its report into `BACKEND_OUT_DIR` |
-
-Just closing the socket also ends the session. **To switch mode,** close the socket
-and open a new one with the other `mode`.
-
-### Minimal client (Python, tested)
-
-```python
-# pip install websockets opencv-python
-import asyncio, json, struct, cv2, websockets
-
-URL = "ws://<server-ip>:8100/api/live?token=<token>"
-
-async def main(video="IMG_0454.MOV", mode="extinguisher"):
-    async with websockets.connect(URL, max_size=None) as ws:
-        await ws.send(json.dumps({"type": "start", "mode": mode}))
-        ready = json.loads(await ws.recv())
-        if ready["type"] != "ready":
-            raise SystemExit(ready)                      # {"type": "error", "detail": …}
-        cap, seq = cv2.VideoCapture(video), 0
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            k = min(1.0, ready["send_width"] / frame.shape[1])
-            frame = cv2.resize(frame, None, fx=k, fy=k)
-            _, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, int(100 * ready["jpeg_quality"])])
-            await ws.send(struct.pack("<Id", seq, seq / fps) + jpg.tobytes())
-            r = json.loads(await ws.recv())              # one frame in flight
-            for ev in r.get("events", []):
-                print(f"{ev['video_time_s']:6.1f}s  {ev['text']}")
-            seq += 1
-        await ws.send(json.dumps({"type": "stop"}))
-        print("final:", [x["text"] for x in r.get("inventory", r.get("exits", []))])
-
-asyncio.run(main())
-```
+The backend's API (REST and WebSocket: live mode, server-video sessions, every message
+format) is documented in **[docs/android-api.md](docs/android-api.md)**, written for the
+Android tablet app. The web app (`frontend/app.js`) is a client of the same API.
 
 ---
 
@@ -1034,7 +478,7 @@ Silicon client over the LAN). Treat as indicative.
 | Qwen3-VL-8B via OpenRouter | 2.3–4 s, occasional 10 s+ outliers |
 | LocateAnything-3B, `hybrid`, 960 px | 1.5–1.9 s model time, 2–2.5 s round trip |
 | YOLOE-11s on the Mac (MPS) | 45–75 ms per frame |
-| `exit_monitor.py` fast loop on the Mac | ~75 ms per frame (~13 fps) |
+| `apps/exit_monitor.py` fast loop on the Mac | ~75 ms per frame (~13 fps) |
 
 YOLOE on the 4090 (`server/run_monitor.sh`) is expected to be several times faster but
 has not been benchmarked yet.
@@ -1054,6 +498,7 @@ has not been benchmarked yet.
 | Web app: video doesn't play | Browser can't decode the file (often HEVC outside macOS) → `ffmpeg -i in.MOV -c:v libx264 -pix_fmt yuv420p out.mp4` |
 | Web app: "Qwen down — skipped" | Live mode carries on without that model; start it (`bash server/start_all.sh`) and press Start detection again. |
 | Browser view not reachable | `ssh -L 8090:localhost:8090 <user>@<server>` → `http://localhost:8090`. |
+| `No frames from rtsp://… after 30 s`, frequent `stream lost — reconnecting` | Live camera problems (MediaMTX, Wi-Fi, firewall, WSL2) → [docs/live-camera.md](docs/live-camera.md#7-troubleshooting). |
 | LocateAnything setup fails at the PyTorch step | `TORCH_INDEX=https://download.pytorch.org/whl/cu121 bash server/setup_locate.sh` |
 
 ---
@@ -1081,7 +526,7 @@ has not been benchmarked yet.
   LocateAnything uses the sampling settings from its model card (temperature 0.7), so
   its boxes can vary slightly between runs.
 - Live runs pace the video to wall-clock time and drop frames when processing is slow,
-  so frame-level results depend on hardware speed; `video_infer.py` (offline) does not
+  so frame-level results depend on hardware speed; `apps/video_infer.py` (offline) does not
   drop frames.
 
 ## Licences

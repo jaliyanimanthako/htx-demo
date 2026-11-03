@@ -10,7 +10,7 @@ object CameraTuning {
     const val MAX_FPS = 5
     const val RESULT_MAX_AGE_MS = 2000L
 }
-enum class InputSource { RECORDED_VIDEO, TABLET_CAMERA }
+enum class InputSource { RECORDED_VIDEO, TABLET_CAMERA, EXTERNAL_CAMERA }
 data class CameraCapture(val enabled: Boolean = false, val generation: Long = 0, val permissionGranted: Boolean = false)
 /** Three projected corners of the rotated/cropped image in PreviewView pixels. */
 data class CameraProjection(val originX: Float, val originY: Float, val edgeXx: Float, val edgeXy: Float,

@@ -16,7 +16,7 @@ fun validBackendUrl(base: String): Boolean {
 }
 
 class DemoFailure(val kind: Kind) : IOException() {
-    enum class Kind { QWEN, BACKEND, AUTH, START, CONNECTION, BUSY, IN_USE, LIVE_FAILED }
+    enum class Kind { QWEN, BACKEND, AUTH, START, CONNECTION, BUSY, IN_USE, LIVE_FAILED, EXTERNAL_CAMERA }
 }
 enum class Connection(val label: String) {
     IDLE("Ready"), CONNECTING("Starting demo…"), CONNECTED("Running"),
@@ -47,6 +47,9 @@ interface CameraDemoClient {
 }
 interface DemoSessions {
     suspend fun prepareCamera(base: String, token: String, currentId: String) {}
+    suspend fun startExternal(base: String, token: String, currentId: String, progress: (String) -> Unit): String {
+        throw DemoFailure(DemoFailure.Kind.EXTERNAL_CAMERA)
+    }
     suspend fun requireQwen(base: String, token: String)
     suspend fun videos(base: String, token: String): List<String>
     suspend fun startDemo(base: String, token: String, currentId: String, source: String, progress: (String) -> Unit): String
@@ -100,6 +103,7 @@ class DemoController<T>(private val scope: CoroutineScope, private val store: De
     // All callbacks, including OkHttp callbacks, are serialized on the owning scope.
     private fun accept(id: Long, attempt: Long, action: () -> Unit) { scope.launch { if (active && id == generation && attempt == attemptGeneration) action() } }
     private fun failure(e: Exception, reconnecting: Boolean = false): MonitorState = when ((e as? DemoFailure)?.kind) {
+        DemoFailure.Kind.EXTERNAL_CAMERA -> MonitorState(Connection.FAILED, detail = "External camera is not configured on this backend. Ask the demo administrator to configure it, then retry.")
         DemoFailure.Kind.LIVE_FAILED -> MonitorState(Connection.LIVE_FAILED, detail = "Live monitoring could not start. Check the backend and try again.")
         DemoFailure.Kind.QWEN -> MonitorState(Connection.FAILED, detail = "Update and restart the backend to enable detection without Qwen.")
         DemoFailure.Kind.BUSY -> MonitorState(Connection.CONNECTING, detail = "Waiting for previous processing to finish. Retrying automatically.")
@@ -113,6 +117,12 @@ class DemoController<T>(private val scope: CoroutineScope, private val store: De
     fun showSources() { if (settings.configured) _sourcePicker.value = true }
     fun dismissSources() { _sourcePicker.value = false }
     fun chooseRecorded() { dismissSources(); showVideoDemo() }
+    fun chooseExternal() {
+        dismissSources(); dismissVideos()
+        settings = settings.copy(source = InputSource.EXTERNAL_CAMERA)
+        store.save(settings); _source.value = settings.source
+        restart()
+    }
     fun chooseCamera(permissionGranted: Boolean) {
         dismissSources(); dismissVideos()
         settings = settings.copy(source = InputSource.TABLET_CAMERA)
@@ -181,14 +191,14 @@ class DemoController<T>(private val scope: CoroutineScope, private val store: De
         _picker.update { it.copy(selected = source) }
         restart()
     }
-    fun foreground() { active = true; if (settings.configured && (settings.video.isNotBlank() || settings.source == InputSource.TABLET_CAMERA)) restart() }
+    fun foreground() { active = true; if (settings.configured && (settings.video.isNotBlank() || settings.source != InputSource.RECORDED_VIDEO)) restart() }
     fun background() {
         active = false; generation++; job?.cancel(); dismissVideos(); dismissSources()
         pendingCamera?.close(); pendingCamera = null
         _capture.value = CameraCapture(permissionGranted = cameraPermission)
         _cameraResult.value = null; _frame.value = null; _state.value = MonitorState()
     }
-    fun retry() { if (settings.video.isBlank() && settings.source != InputSource.TABLET_CAMERA) showSources() else restart() }
+    fun retry() { if (settings.video.isBlank() && settings.source == InputSource.RECORDED_VIDEO) showSources() else restart() }
     private fun restart() {
         if (!active || !settings.configured) return
         val current = ++generation
@@ -202,7 +212,7 @@ class DemoController<T>(private val scope: CoroutineScope, private val store: De
             _state.value = MonitorState(Connection.CAMERA_PERMISSION, detail = "Camera permission is required to use Tablet camera. Grant permission or choose Pre-recorded video.")
             return
         }
-        _state.value = MonitorState(Connection.CONNECTING, detail = if (camera) "Starting live monitoring…" else "Preparing the selected video…")
+        _state.value = MonitorState(Connection.CONNECTING, detail = if (camera) "Starting live monitoring…" else if (settings.source == InputSource.EXTERNAL_CAMERA) "Connecting to external camera…" else "Preparing the selected video…")
         job = scope.launch {
             withContext(NonCancellable) { old?.join() } // cancellation still waits for preceding cleanup
             ensureActive()
@@ -235,9 +245,12 @@ class DemoController<T>(private val scope: CoroutineScope, private val store: De
                         }
                         throw DemoFailure(DemoFailure.Kind.CONNECTION)
                     }
-                    val id = sessions.startDemo(config.base, config.token, config.session, config.video) { message ->
+                    val progress: (String) -> Unit = { message ->
                         accept(current, attempt) { _state.update { it.copy(detail = message) } }
                     }
+                    val id = if (config.source == InputSource.EXTERNAL_CAMERA)
+                        sessions.startExternal(config.base, config.token, config.session, progress)
+                    else sessions.startDemo(config.base, config.token, config.session, config.video, progress)
                     ensureActive()
                     if (current != generation) return@launch
                     settings = config.copy(session = id)

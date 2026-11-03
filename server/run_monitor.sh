@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run exit_monitor.py on the GPU server, headless, viewed in a browser.
+# Run the exit monitor (apps/exit_monitor.py) on the GPU server, headless, viewed in a browser.
 # Finds the Qwen (vLLM) and LocateAnything servers on this machine automatically.
 #
 #   bash server/run_monitor.sh IMG_0451.MOV              # loops the video, browser on :8090
-#   bash server/run_monitor.sh IMG_0451.MOV --no-yoloe   # extra args go to exit_monitor.py
+#   bash server/run_monitor.sh IMG_0451.MOV --no-yoloe   # extra args go to python run.py exits
 #   CUDA_VISIBLE_DEVICES=0 bash server/run_monitor.sh ...  # GPU for YOLOE (default 0)
 set -euo pipefail
 
@@ -45,5 +45,5 @@ fi
 
 LOOP=()
 [ -f "$SRC" ] && LOOP=(--loop)
-exec python exit_monitor.py "$SRC" --locate-url "$LOCATE_URL" --qwen-url "$QWEN_URL" \
+exec python run.py exits "$SRC" --locate-url "$LOCATE_URL" --qwen-url "$QWEN_URL" \
   --no-display --stream 8090 "${LOOP[@]}" --out-dir results "$@"

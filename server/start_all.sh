@@ -18,14 +18,24 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/server/_lib.sh"
-QWEN_MODEL="${QWEN_MODEL:-4b}"
+CONFIG_QWEN="$(python3 - "${HTX_CONFIG:-$ROOT/config.toml}" <<'PYMODEL'
+import sys, tomllib
+from pathlib import Path
+file = Path(sys.argv[1]).expanduser()
+data = tomllib.loads(file.read_text()) if file.is_file() else {}
+print(data.get("models", {}).get("qwen_model") or "4b")
+PYMODEL
+)"
+QWEN_MODEL="${QWEN_MODEL:-$CONFIG_QWEN}"
+printf -v QWEN_ARGUMENT '%q' "$QWEN_MODEL"
+printf -v CONFIG_ENV '%q' "${HTX_CONFIG:-$ROOT/config.toml}"
 LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR"
 command -v tmux >/dev/null 2>&1 && USE_TMUX=1 || USE_TMUX=0
 
 # name | command | port file | health path | timeout (s)
 SERVICES=(
-  "qwen|bash server/serve_qwen.sh $QWEN_MODEL|$HOME/qwen-vllm/port|/v1/models|2400"
+  "qwen|bash server/serve_qwen.sh $QWEN_ARGUMENT|$HOME/qwen-vllm/port|/v1/models|2400"
   "locate|bash server/serve_locate.sh|$HOME/locate-anything/port|/health|2400"
   "backend|bash server/run_backend.sh|$HOME/exit-monitor/port|/api/health|1800"
 )
@@ -54,7 +64,7 @@ launch() {
   fi
   rm -f "$pfile"
   : > "$LOG_DIR/$name.log"
-  local line="cd '$ROOT' && $cmd 2>&1 | tee '$LOG_DIR/$name.log'; echo __EXITED__ >> '$LOG_DIR/$name.log'"
+  local line="cd '$ROOT' && export HTX_CONFIG=$CONFIG_ENV && $cmd 2>&1 | tee '$LOG_DIR/$name.log'; echo __EXITED__ >> '$LOG_DIR/$name.log'"
   if [ "$USE_TMUX" = 1 ]; then
     tmux kill-session -t "$name" 2>/dev/null
     tmux new-session -d -s "$name"

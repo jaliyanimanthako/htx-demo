@@ -115,14 +115,21 @@ def health():
 @app.get("/api/info", dependencies=[Depends(require_token)])
 def info():
     return {"models": {"locate_anything": {"url_set": bool(settings.LOCATE_URL),
-                                           "up": _up(settings.LOCATE_URL + "/health")},
+                                           "up": bool(settings.LOCATE_URL) and _up(settings.LOCATE_URL + "/health")},
                        "qwen": {"url_set": bool(settings.QWEN_URL),
-                                "up": _up(settings.QWEN_URL + "/models")}},
+                                "up": bool(settings.QWEN_URL) and _up(settings.QWEN_URL + "/models")}},
             "modes": [{"id": k, "title": v["title"]} for k, v in LIVE_MODES.items()],
             "videos": list_videos(), "max_sessions": settings.MAX_SESSIONS,
             "sessions": [s.info() for s in manager.sessions.values()],
             "live_sessions": [{"id": l.id, "mode": l.mode, "frames": l.frames}
                               for l in manager.live.values()]}
+
+
+@app.get("/api/sources", dependencies=[Depends(require_token)])
+def sources():
+    camera = settings.external_camera()
+    return {"sources": [{"id": settings.EXTERNAL_SOURCE, "name": camera["name"],
+                         "configured": bool(camera["url"].strip())}]}
 
 
 @app.get("/api/videos", dependencies=[Depends(require_token)])
@@ -147,7 +154,7 @@ def create_session(req: SessionRequest):
     try:
         s = manager.create(req.source, req.loop, req.use_yoloe, req.use_locate, req.use_qwen,
                            req.options, mode=req.mode, demo_client_id=req.demo_client_id, require_qwen=req.require_qwen)
-    except SessionError as e:
+    except (SessionError, ValueError) as e:
         raise HTTPException(409 if "already running" in str(e) else 400, str(e))
     return s.info()
 

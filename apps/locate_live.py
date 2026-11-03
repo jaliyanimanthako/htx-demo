@@ -13,12 +13,12 @@ the door width is covered. Doors with an EXIT sign just above are labelled
 "EXIT door".
 
 Usage:
-  python locate_live.py IMG_0450.MOV --url http://<server-ip>:8020
-  python locate_live.py IMG_0450.MOV --url ... --mode fast           # parallel box decoding
-  python locate_live.py IMG_0450.MOV --url ... --delay 4             # buffered mode
-  python locate_live.py IMG_0450.MOV --url ... --no-display --stream # headless → browser
-  python locate_live.py 0 --url ...                                  # webcam
-  python locate_live.py IMG_0450.MOV --url ... --qwen-url http://<server-ip>:8010/v1
+  python run.py locate-live IMG_0450.MOV --url http://<server-ip>:8020
+  python run.py locate-live IMG_0450.MOV --url ... --mode fast           # parallel box decoding
+  python run.py locate-live IMG_0450.MOV --url ... --delay 4             # buffered mode
+  python run.py locate-live IMG_0450.MOV --url ... --no-display --stream # headless → browser
+  python run.py locate-live 0 --url ...                                  # webcam
+  python run.py locate-live IMG_0450.MOV --url ... --qwen-url http://<server-ip>:8010/v1
       # + Qwen names any object at the door (open-world) and checks floor vs furniture
   q / Esc quits, space pauses.
 """
@@ -33,7 +33,7 @@ from core.labels import DOOR_LABELS, OBSTACLE_LABELS, SIGN_LABELS, kind_of, norm
 from core.qwen_assist import QwenAssist
 from core.rules import assess, box_iou, containment, merge_double_doors
 from engines.locate_engine import LocateEngine
-from live_infer import run_buffered, run_live
+from apps.live_infer import run_buffered, run_live
 
 
 # ── LocateAnything query ──────────────────────────────────────────────────────

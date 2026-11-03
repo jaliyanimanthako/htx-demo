@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import numpy as np
 
-from exit_monitor import ExitMonitor
-from extinguisher_monitor import ExtinguisherMonitor, ExtRecord
+from apps.exit_monitor import ExitMonitor
+from apps.extinguisher_monitor import ExtinguisherMonitor, ExtRecord
 
 GRAY, GREEN, AMBER, RED = (160, 160, 160), (0, 200, 0), (0, 200, 255), (0, 0, 255)
 
@@ -26,7 +26,7 @@ class AnnotationStyleTests(unittest.TestCase):
             with self.subTest(status=status):
                 record.status = status
                 monitor._label.reset_mock()
-                image = monitor._draw(np.zeros((240, 320, 3), dtype=np.uint8), 5)
+                image = monitor.draw(np.zeros((240, 320, 3), dtype=np.uint8), 5)
                 self.assertEqual(tuple(image[100, 20]), color)
                 self.assertEqual(tuple(image[130, 45]), RED)
                 labels = [call.args[1] for call in monitor._label.call_args_list]
@@ -37,11 +37,11 @@ class AnnotationStyleTests(unittest.TestCase):
                 self.assertEqual(record.blocker_ids, [44])
         # Qwen confirmation still pending: even a provisional clear exit stays gray.
         track['exit_ok'], record.status = None, 'clear'
-        self.assertEqual(tuple(monitor._draw(np.zeros((240, 320, 3), dtype=np.uint8), 5)[100, 20]), GRAY)
+        self.assertEqual(tuple(monitor.draw(np.zeros((240, 320, 3), dtype=np.uint8), 5)[100, 20]), GRAY)
         self.assertIn('CHECKING', monitor._label.call_args_list[-2].args[1])
         # Geometric exit status remains available when Qwen is absent.
         monitor.qwen = None
-        self.assertEqual(tuple(monitor._draw(np.zeros((240, 320, 3), dtype=np.uint8), 5)[100, 20]), GREEN)
+        self.assertEqual(tuple(monitor.draw(np.zeros((240, 320, 3), dtype=np.uint8), 5)[100, 20]), GREEN)
 
     def test_extinguisher_processing_verification_and_status_palette(self):
         monitor = ExtinguisherMonitor.__new__(ExtinguisherMonitor)
@@ -58,7 +58,7 @@ class AnnotationStyleTests(unittest.TestCase):
         from unittest.mock import patch
         for status, confirmed, pending, color in cases:
             with self.subTest(status=status, confirmed=confirmed, pending=pending), \
-                 patch('extinguisher_monitor._label') as label:
+                 patch('apps.extinguisher_monitor._label') as label:
                 record.status, record.confirmed, record.pending = status, confirmed, pending
                 image = monitor.draw(np.zeros((240, 320, 3), dtype=np.uint8))
                 self.assertEqual(tuple(image[100, 20]), color)

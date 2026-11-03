@@ -154,4 +154,27 @@ class SessionControllerTest {
         assertEquals(1,requests.size)
     }
 
+    @Test fun externalCameraUsesConfiguredSourceAndCombinedNonLoopingSession() = runBlocking {
+        val c = controller(200 to """{"sources":[{"id":"external-camera","configured":true}]}""",
+            200 to """{"sessions":[]}""",
+            200 to """{"components":{"schemas":{"SessionRequest":{"properties":{"mode":{"enum":["combined"]}}}}}}""",
+            201 to """{"id":"external"}""")
+        assertEquals("external", c.startExternal("http://backend", "secret", "") {})
+        assertTrue(requests.none { it.url.encodedPath == "/api/videos" })
+        assertTrue(requests.all { it.header("Authorization") == "Bearer secret" })
+        val buffer = okio.Buffer(); requests.last().body!!.writeTo(buffer)
+        val payload = JSONObject(buffer.readUtf8())
+        assertEquals("external-camera", payload.getString("source"))
+        assertEquals("combined", payload.getString("mode"))
+        assertFalse(payload.getBoolean("loop"))
+        assertFalse(payload.getBoolean("require_qwen"))
+    }
+    @Test fun unconfiguredExternalCameraDoesNotStopExistingSession() = runBlocking {
+        val c = controller(200 to """{"sources":[{"id":"external-camera","configured":false}]}""")
+        try { c.startExternal("http://backend", "", "old") {}; fail("Must explain missing configuration") }
+        catch (e: DemoFailure) { assertEquals(DemoFailure.Kind.EXTERNAL_CAMERA, e.kind) }
+        assertEquals(1, requests.size)
+        assertEquals("GET", requests.single().method)
+    }
+
 }

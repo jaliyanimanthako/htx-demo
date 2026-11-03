@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 import numpy as np
 from backend.sessions import Session, SessionManager, SessionError
 from backend.app import SessionRequest
-import extinguisher_monitor as X
+from apps import extinguisher_monitor as X
 
 
 class ExtinguisherSessionTests(unittest.TestCase):
@@ -58,7 +58,8 @@ class ExtinguisherSessionTests(unittest.TestCase):
             def frame(original, annotated, combined, state):
                 states.append(state)
                 monitor.request_stop()
-            monitor = X.ExtinguisherMonitor(args, detector=lambda _: [], on_frame=frame)
+            detector = MagicMock(model_name="yoloe-11s-seg.pt", return_value=[])
+            monitor = X.ExtinguisherMonitor(args, detector=detector, on_frame=frame)
             source = MagicMock(width=64, height=48, fps=30, idx=0, dropped=0)
             source.read.return_value = (0, np.zeros((48, 64, 3), dtype=np.uint8), 0)
             source.video_time.return_value = 0.0

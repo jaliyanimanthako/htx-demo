@@ -48,3 +48,6 @@ results/
 .DS_Store
 Thumbs.db
 logs/
+
+# Machine-specific TOML overrides (full selected configuration files)
+*.local.toml

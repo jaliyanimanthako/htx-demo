@@ -1,5 +1,8 @@
 # Fire Safety Demo for Android tablets
 
+The source picker also supports **External camera** using the shared root `config.toml`. See [RTMP backend integration](../docs/tablet-rtmp-integration.md) for setup on WSL or the GPU server. The tablet interface and detection labels are retained.
+
+
 Native Kotlin / Jetpack Compose landscape client for combined **exit-obstruction and fire-extinguisher monitoring**, with optional Qwen-assisted analysis. Local MacBook development works without a Qwen/GPU server. The Python backend runs both detection pipelines. The tablet displays backend-annotated recordings or uses its rear camera with local preview and backend detection overlays. It does not run models locally or start Qwen. Flame/smoke detection is not implemented.
 
 ## Operator workflow

@@ -104,7 +104,7 @@ class DemoQwenTests(unittest.TestCase):
         import numpy as np
         from pathlib import Path
         from backend.combined import CombinedMonitor
-        from exit_monitor import build_parser, ExitMonitor
+        from apps.exit_monitor import build_parser, ExitMonitor
         captured, states = [], []
         def make_exit(*args, **kwargs):
             result = ExitMonitor(*args, **kwargs)
@@ -132,8 +132,8 @@ class DemoQwenTests(unittest.TestCase):
             with patch("backend.combined.LiveSource", return_value=source), \
                  patch("backend.combined.require_qwen", **({"return_value":"test-model"} if available else {"side_effect":QwenUnavailable()})), \
                  patch("backend.combined.ExitMonitor", side_effect=make_exit), \
-                 patch("exit_monitor.QwenEngine") as exit_engine, \
-                 patch("extinguisher_monitor.QwenEngine") as tag_engine:
+                 patch("apps.exit_monitor.QwenEngine") as exit_engine, \
+                 patch("apps.extinguisher_monitor.QwenEngine") as tag_engine:
                 monitor.run()
                 self.assertEqual(exit_engine.called, available)
                 self.assertEqual(tag_engine.call_count, 2 if available else 0)

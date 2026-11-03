@@ -4,8 +4,8 @@ the server runs the pipeline on each frame and returns only JSON (boxes, exit
 statuses, new events). No video is streamed back, so the view never lags.
 
 Two modes (chosen in the "start" message):
-    exits         exit / obstruction monitor (exit_monitor.py)
-    extinguisher  fire extinguishers + expiry / service date (extinguisher_monitor.py)
+    exits         exit / obstruction monitor (apps/exit_monitor.py)
+    extinguisher  fire extinguishers + expiry / service date (apps/extinguisher_monitor.py)
 
 Frame message (binary WebSocket message), little-endian:
     uint32 seq | float64 video_time_s | JPEG bytes
@@ -25,7 +25,7 @@ import cv2
 import numpy as np
 
 from backend import settings
-from exit_monitor import ExitMonitor, build_parser
+from apps.exit_monitor import ExitMonitor, build_parser
 
 MODES = {
     # send_width / jpeg_quality: what the browser should send for this mode
@@ -88,10 +88,11 @@ class LiveSession:
 
     def _init_combined(self, detectors, use_qwen, options):
         from backend.combined import CombinedMonitor
-        args = build_parser().parse_args(["live"])
+        args = settings.apply_monitor_config(build_parser().parse_args(["live"]), "exits", options)
         args.no_yoloe, args.locate_url = False, None
         args.qwen_url = settings.QWEN_URL if use_qwen else None
         args.qwen_requested, args.require_qwen = use_qwen, False
+        args.ext_options = options
         args.snapshots = False  # live tablet frames are never saved
         args.no_display, args.stream, args.save, args.log_frames = True, None, None, False
         args.out_dir = str(self.out_dir)
@@ -112,7 +113,7 @@ class LiveSession:
         return settings.QWEN_URL
 
     def _init_exits(self, detectors, use_yoloe, use_locate, use_qwen, options):
-        args = build_parser().parse_args(["live"])
+        args = settings.apply_monitor_config(build_parser().parse_args(["live"]), "exits", options)
         args.no_yoloe = not use_yoloe
         args.locate_url = settings.LOCATE_URL if use_locate else None
         if args.locate_url and not _reachable(args.locate_url.rstrip("/") + "/health"):
@@ -131,8 +132,8 @@ class LiveSession:
         self.monitor = ExitMonitor(args, fast_detector=detectors("exits") if use_yoloe else None)
 
     def _init_extinguisher(self, detectors, use_qwen, options):
-        import extinguisher_monitor as X
-        args = X.build_parser().parse_args(["live"])
+        from apps import extinguisher_monitor as X
+        args = settings.apply_monitor_config(X.build_parser().parse_args(["live"]), "extinguishers", options)
         args.qwen_url = self._qwen_url(use_qwen)
         args.no_qwen = not args.qwen_url
         args.no_display, args.stream, args.save, args.log_frames = True, None, None, False

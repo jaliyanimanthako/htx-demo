@@ -57,6 +57,10 @@ class SessionController(private val http: OkHttpClient = OkHttpClient.Builder()
                           progress: (String) -> Unit): String {
         return switchVideo(base, token, currentId, source, "combined", true, false, requireQwen = false, progress = progress)
     }
+    override suspend fun startExternal(base: String, token: String, currentId: String, progress: (String) -> Unit): String {
+        return switchVideo(base, token, currentId, "external-camera", "combined", true, false,
+            requireQwen = false, progress = progress)
+    }
     override suspend fun videos(base: String, token: String): List<String> {
         val list = request(base, token, "api/videos").getJSONArray("videos")
         return (0 until list.length()).map { list.getString(it) }
@@ -65,7 +69,14 @@ class SessionController(private val http: OkHttpClient = OkHttpClient.Builder()
                             mode: String = "exits", readDates: Boolean = false, adoptSingleSession: Boolean = false,
                             requireQwen: Boolean = false, progress: (String) -> Unit): String {
         require(mode in setOf("exits", "extinguisher", "combined"))
-        require(source in videos(base, token)) { "Video is no longer available on the backend" }
+        val external = source == "external-camera"
+        if (external) {
+            val sources = request(base, token, "api/sources").getJSONArray("sources")
+            if (!(0 until sources.length()).any {
+                    val item = sources.getJSONObject(it)
+                    item.optString("id") == source && item.optBoolean("configured", false)
+                }) throw DemoFailure(DemoFailure.Kind.EXTERNAL_CAMERA)
+        } else require(source in videos(base, token)) { "Video is no longer available on the backend" }
         val sessions = request(base, token, "api/sessions").getJSONArray("sessions")
         val all = (0 until sessions.length()).map { sessions.getJSONObject(it) }
         val active = all.filter { it.getString("status") in setOf("starting", "running") }
@@ -91,13 +102,13 @@ class SessionController(private val http: OkHttpClient = OkHttpClient.Builder()
         if (current in active && current != null) {
             val id = current.getString("id")
             require(id.matches(Regex("[A-Za-z0-9_-]+")))
-            progress("Changing video…")
+            progress("Changing source…")
             request(base, token, "api/sessions/$id", "DELETE")
             awaitStopped(base, token, id)
         }
         progress("Starting demo…")
         val models = current?.optJSONObject("models")
-        val payload = JSONObject().put("require_qwen", requireQwen).put("source", source).put("loop", true).put("mode", mode)
+        val payload = JSONObject().put("require_qwen", requireQwen).put("source", source).put("loop", !external).put("mode", mode)
             .put("use_yoloe", if (mode != "exits") true else models?.optBoolean("yoloe", true) ?: true)
             .put("use_locate", if (mode != "exits") false else models?.optBoolean("locate_anything", false) ?: false)
             .put("use_qwen", if (mode != "exits") readDates else models?.optBoolean("qwen", false) ?: false)

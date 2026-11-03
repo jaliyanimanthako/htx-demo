@@ -53,7 +53,11 @@ fun FireDetectionScreen(model: FireDetectionViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(if (source == InputSource.TABLET_CAMERA) "Tablet camera" else "Pre-recorded videos",
+                    Text(when (source) {
+                        InputSource.TABLET_CAMERA -> "Tablet camera"
+                        InputSource.EXTERNAL_CAMERA -> "External camera"
+                        InputSource.RECORDED_VIDEO -> "Pre-recorded videos"
+                    },
                         style = MaterialTheme.typography.titleLarge)
                     if (source == InputSource.RECORDED_VIDEO && picker.selected.isNotEmpty())
                         Text(picker.selected, style = MaterialTheme.typography.bodySmall, maxLines = 1)
@@ -61,7 +65,7 @@ fun FireDetectionScreen(model: FireDetectionViewModel) {
                 Text(if (state.connection == Connection.CONNECTED && !state.videoAvailable) "Starting demo…" else state.connection.label,
                     color = if (state.connection == Connection.CONNECTED) Color(0xFF80DFB1) else Color(0xFFFFB454))
                 Spacer(Modifier.width(12.dp))
-                Button(onClick = { if (model.settings.configured) model.showSources() else settingsOpen = true }) { Text(if (picker.selected.isBlank() && source != InputSource.TABLET_CAMERA) "Start demo" else "Change source") }
+                Button(onClick = { if (model.settings.configured) model.showSources() else settingsOpen = true }) { Text(if (picker.selected.isBlank() && source == InputSource.RECORDED_VIDEO) "Start demo" else "Change source") }
                 Spacer(Modifier.width(8.dp))
                 OutlinedButton(onClick = { settingsOpen = true }) { Text("Settings") }
             }
@@ -97,6 +101,8 @@ fun FireDetectionScreen(model: FireDetectionViewModel) {
             Text("Use one of the backend demo videos.", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = { chooseCamera() }, modifier = Modifier.fillMaxWidth()) { Text("Tablet camera") }
             Text("Use the rear camera for live monitoring.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { model.chooseExternal() }, modifier = Modifier.fillMaxWidth()) { Text("External camera") }
+            Text("Use the external camera connected to the backend.", style = MaterialTheme.typography.bodySmall)
         }
     }, confirmButton = { TextButton(onClick = { model.dismissSources() }) { Text("Cancel") } })
     if (picker.open) AlertDialog(onDismissRequest = { model.dismissVideos() }, title = { Text("Choose demo video") }, text = {

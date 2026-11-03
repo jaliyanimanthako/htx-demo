@@ -66,7 +66,7 @@ class CombinedLiveTests(unittest.TestCase):
     def test_available_qwen_enables_both_existing_assistants(self):
         with tempfile.TemporaryDirectory() as directory, patch('backend.live.settings.OUT_DIR', Path(directory)), \
              patch('backend.combined.require_qwen', return_value='test-model'), \
-             patch('exit_monitor.QwenEngine') as exit_engine, patch('extinguisher_monitor.QwenEngine') as ext_engine:
+             patch('apps.exit_monitor.QwenEngine') as exit_engine, patch('apps.extinguisher_monitor.QwenEngine') as ext_engine:
             session=LiveSession(lambda mode: lambda frame: [],mode='combined')
             try:
                 self.assertTrue(session.models['qwen'])

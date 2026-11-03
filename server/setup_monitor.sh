@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup for exit_monitor.py on the GPU server.
+# One-time setup for the monitors (apps/, python run.py …) and the backend on the GPU server.
 # Own env (~/exit-monitor/.venv) so it can't break the vLLM or LocateAnything envs.
 #
 #   bash server/setup_monitor.sh

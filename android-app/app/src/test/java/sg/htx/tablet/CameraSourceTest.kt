@@ -16,6 +16,10 @@ class CameraSourceTest {
         override fun save(settings: Settings) { this.settings=settings }
     }
     private class Sessions : DemoSessions {
+        var externalStarted = 0
+        override suspend fun startExternal(base: String, token: String, currentId: String, progress: (String)->Unit): String {
+            externalStarted++; return "external-session"
+        }
         var videosStarted = 0
         var prepared = 0
         override suspend fun requireQwen(base: String, token: String) = Unit
@@ -156,4 +160,23 @@ class CameraSourceTest {
         assertEquals(BoundingBox(160f,96f,480f,288f),CameraProjection(640f,0f,640f,480f,0f,0f).map(raw))
         assertEquals(BoundingBox(400f,125f,800f,375f),CameraProjection(1000f,0f,0f,0f,1000f,500f).map(raw))
     }
+    @Test fun externalCameraPersistsSelectionAndResumesWithoutTabletPermission()=runTest {
+        val sessions=Sessions(); val camera=Camera(); val video=Video(); val store=Store()
+        val c=DemoController(backgroundScope,store,sessions,video,camera)
+        c.foreground(); c.chooseExternal(); runCurrent()
+        assertEquals(InputSource.EXTERNAL_CAMERA,c.source.value)
+        assertEquals(InputSource.EXTERNAL_CAMERA,store.settings.source)
+        assertEquals(1,sessions.externalStarted)
+        assertEquals(0,sessions.videosStarted)
+        assertFalse(c.capture.value.enabled)
+        assertTrue(camera.calls.isEmpty())
+        assertEquals(1,video.open)
+        c.background(); runCurrent()
+        c.foreground(); runCurrent()
+        assertEquals(2,sessions.externalStarted)
+        c.detectVideo("one.MOV"); runCurrent()
+        assertEquals(InputSource.RECORDED_VIDEO,c.source.value)
+        assertEquals(1,sessions.videosStarted)
+    }
+
 }

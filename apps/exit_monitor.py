@@ -18,12 +18,12 @@ Nothing in the fast loop waits for LocateAnything or Qwen. Without YOLOE
 results by camera-motion compensation (simpler, ~1-2 s stale).
 
 Usage:
-  python exit_monitor.py IMG_0451.MOV                       # URLs from .env (LOCATE_URL, QWEN_URL)
-  python exit_monitor.py IMG_0451.MOV --locate-url http://<server-ip>:8020 \\
+  python run.py exits IMG_0451.MOV                       # URLs from .env (LOCATE_URL, QWEN_URL)
+  python run.py exits IMG_0451.MOV --locate-url http://<server-ip>:8020 \\
                                       --qwen-url http://<server-ip>:8010/v1
-  python exit_monitor.py IMG_0451.MOV --no-yoloe            # LocateAnything + Qwen only
-  python exit_monitor.py IMG_0451.MOV --no-display --stream # headless → browser :8090
-  python exit_monitor.py rtsp://<server>:8554/cam           # live camera later
+  python run.py exits IMG_0451.MOV --no-yoloe            # LocateAnything + Qwen only
+  python run.py exits IMG_0451.MOV --no-display --stream # headless → browser :8090
+  python run.py exits rtsp://<server>:8554/cam           # live camera later
   q / Esc quits, space pauses.
 """
 
@@ -45,6 +45,7 @@ import core.config  # noqa: F401  (loads .env)
 from core.depth_check import base_crop
 from core.drawing import text_scale
 from core.labels import DOOR_LABELS, OBSTACLE_LABELS, SIGN_LABELS, kind_of, norm_box_to_pixels
+from core.models import qwen_label, yoloe_label
 from core.parsing import STATUS_CODES
 from core.prompts import CONFIRM_PROMPT, DEPTH_PROMPT, VERDICT_PROMPT
 from core.qwen_assist import QwenAssist, first_served_model
@@ -90,9 +91,9 @@ class FastDetector:
     """YOLOE with text prompts (lazy import so --no-yoloe works without ultralytics)."""
 
     def __init__(self, model_name: str, imgsz: int = 640):
-        import yoloe_infer as Y
+        from apps import yoloe_infer as Y
         from ultralytics import YOLOE
-        self.Y, self.imgsz = Y, imgsz
+        self.Y, self.imgsz, self.model_name = Y, imgsz, model_name
         self.device = Y._pick_device()
         self.names = Y.DOOR_CLASSES + Y.SIGN_CLASSES + Y.OBSTACLE_CLASSES + Y.DECOY_CLASSES
         self.kind = ({n: "door" for n in Y.DOOR_CLASSES} | {n: "sign" for n in Y.SIGN_CLASSES}
@@ -423,7 +424,8 @@ class ExitMonitor:
         with self._flog_lock:
             self._flog[key].append(text)
 
-    def _print_frame(self, idx, vt, ms_total, fast_info, la_merged):
+    def frame_log(self, fast_info, la_merged) -> str:
+        """What happened since the last call (YOLOE, LocateAnything, Qwen, tracks), one line."""
         with self._flog_lock:
             la, q_out, q_in = self._flog["la"], self._flog["q_out"], self._flog["q_in"]
             self._flog = {"la": [], "q_out": [], "q_in": []}
@@ -433,8 +435,12 @@ class ExitMonitor:
         q_txt = " ".join([f"-> {x}" for x in q_out] + [f"<- {x}" for x in q_in]) or "-"
         n_d = len(self.tracker.visible("door"))
         n_o = len(self.tracker.visible("obstacle"))
-        print(f"  f{idx:5d} t={vt:6.2f}s {ms_total:4.0f}ms | {yolo} | LA: {la_txt} | "
-              f"Qwen: {q_txt} | tracks: {n_d} door, {n_o} obstacle", flush=True)
+        return (f"{yolo} | LA: {la_txt} | Qwen: {q_txt} | "
+                f"tracks: {n_d} door, {n_o} obstacle")
+
+    def _print_frame(self, idx, vt, ms_total, fast_info, la_merged):
+        print(f"  f{idx:5d} t={vt:6.2f}s {ms_total:4.0f}ms | {self.frame_log(fast_info, la_merged)}",
+              flush=True)
 
     # ── per-frame exit logic ─────────────────────────────────────────────────
     def _update_exits(self, frame, W, H, now, vt):
@@ -527,7 +533,7 @@ class ExitMonitor:
             rec.snapshot = str(path)
 
     # ── drawing ──────────────────────────────────────────────────────────────
-    def _draw(self, frame, now) -> np.ndarray:
+    def draw(self, frame, now) -> np.ndarray:
         out = frame.copy()
         s, th = text_scale(out)
         by_id = {t["id"]: t for t in self.tracker.tracks}
@@ -556,7 +562,7 @@ class ExitMonitor:
                         x1, y1, OBSTACLE_BGR, s * 0.85, th)
         return out
 
-    def _state(self, now: float, vt: float, fps: float) -> dict:
+    def state(self, now: float, vt: float, fps: float) -> dict:
         """Snapshot for the web app (GET /state)."""
         by_id = {t["id"]: t for t in self.tracker.tracks}
         exits = []
@@ -581,12 +587,13 @@ class ExitMonitor:
         txt_col = (0, 0, 0) if col == STATUS_BGR["partially_obstructed"] else (255, 255, 255)
         cv2.putText(img, text, (x + 3, y - 5), cv2.FONT_HERSHEY_SIMPLEX, s, txt_col, th, cv2.LINE_AA)
 
-    def _panel(self, width: int, now: float, vt: float, fps: float) -> np.ndarray:
+    def panel(self, width: int, now: float, vt: float, fps: float) -> np.ndarray:
         h = 200
         p = np.full((h, width, 3), 30, np.uint8)
         f = cv2.FONT_HERSHEY_SIMPLEX
-        mode = ("YOLOE + " if self.fast else "") + ("LocateAnything" if self.locate else "") \
-            + (" + Qwen" if self.qwen else "")
+        mode = " + ".join(m for m in (yoloe_label(self.fast.model_name) if self.fast else None,
+                                      "LocateAnything" if self.locate else None,
+                                      qwen_label(self.qwen.model_name) if self.qwen else None) if m)
         cv2.putText(p, f"EXITS   t={vt:5.1f}s   {fps:4.1f} fps   [{mode}]", (12, 26), f, 0.7,
                     (230, 230, 230), 2, cv2.LINE_AA)
         y = 56
@@ -610,7 +617,7 @@ class ExitMonitor:
     # ── main loop ────────────────────────────────────────────────────────────
     def run(self):
         a = self.args
-        src = LiveSource(a.source, loop=a.loop)
+        src = LiveSource(a.source, loop=a.loop, halt=self._halt)   # stop works while a stream stalls
         scale = min(1.0, a.proc_width / src.width)
         W, H = int(src.width * scale) // 2 * 2, int(src.height * scale) // 2 * 2
         stem = Path(a.source).stem if Path(a.source).is_file() else "live"
@@ -642,25 +649,25 @@ class ExitMonitor:
                 vt = src.video_time()
                 frame, fast_info, la_merged, now = self.step(frame, vt)
 
-                annotated = self._draw(frame, now)
+                annotated = self.draw(frame, now)
                 times.append(time.time() - t_frame)
                 if a.log_frames:
                     self._print_frame(idx, vt, 1000 * times[-1], fast_info, la_merged)
                 fps = 1.0 / max(1e-3, np.mean(times[-30:]))
                 top = cv2.hconcat([frame, annotated])
                 top = cv2.resize(top, (out_w, out_h - 200), interpolation=cv2.INTER_AREA)
-                combined = cv2.vconcat([top, self._panel(out_w, now, vt, fps)])
+                combined = cv2.vconcat([top, self.panel(out_w, now, vt, fps)])
 
                 if self.on_frame:
                     try:
-                        self.on_frame(frame, annotated, combined, self._state(now, vt, fps))
+                        self.on_frame(frame, annotated, combined, self.state(now, vt, fps))
                     except Exception as e:
                         print(f"  on_frame error: {e}")
                 if streamer:
                     streamer.publish(combined)                       # /stream (all-in-one)
                     streamer.publish(frame, "original")              # /stream/original
                     streamer.publish(annotated, "annotated")         # /stream/annotated
-                    streamer.set_state(self._state(now, vt, fps))    # /state (JSON)
+                    streamer.set_state(self.state(now, vt, fps))    # /state (JSON)
                 if writer:
                     for _ in range(skipped + 1):
                         writer.write(combined)

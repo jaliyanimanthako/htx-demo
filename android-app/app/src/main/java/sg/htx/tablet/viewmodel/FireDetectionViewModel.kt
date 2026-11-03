@@ -25,6 +25,7 @@ class FireDetectionViewModel(app: Application) : AndroidViewModel(app) {
     val cameraResult = demo.cameraResult
     fun showSources() = demo.showSources()
     fun dismissSources() = demo.dismissSources()
+    fun chooseExternal() = demo.chooseExternal()
     fun chooseRecorded() = demo.chooseRecorded()
     fun chooseCamera(granted: Boolean) = demo.chooseCamera(granted)
     fun cameraPermission(granted: Boolean) = demo.cameraPermission(granted)

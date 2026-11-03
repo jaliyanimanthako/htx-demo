@@ -9,6 +9,31 @@ urllib.request.urlopen(sys.argv[1], timeout=5)
 PY
 }
 
+# qwen_lookup NAME → "<Hugging Face repo> <GB of weights>" for a Qwen model name from
+# core/models.py (2b, 4b-fp8, qwen3-vl-4b-instruct, …); other repo ids pass through
+# with GB "?". An unknown name prints the choices and fails.
+qwen_lookup() {
+  python3 - "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" "$1" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from core.models import qwen_gb, qwen_repo
+try:
+    repo = qwen_repo(sys.argv[2])
+except ValueError as e:
+    sys.exit(str(e))
+print(repo, qwen_gb(repo) or "?")
+PY
+}
+
+# served_model URL → the model a running vLLM server serves (URL ends in /v1)
+served_model() {
+  python3 - "$1" <<'PY' 2>/dev/null
+import json, sys, urllib.request
+with urllib.request.urlopen(sys.argv[1] + "/models", timeout=5) as r:
+    print(json.load(r)["data"][0]["id"])
+PY
+}
+
 # pip_into PYTHON PKG... → install packages into that interpreter's environment,
 # whichever installer it has (pip, uv, or pip bootstrapped with ensurepip)
 pip_into() {
@@ -46,12 +71,14 @@ ensure_uv() {
 }
 
 # new_venv DIR PYVER → create a fresh virtualenv at DIR with Python PYVER using uv
-# (an existing DIR is moved aside first, never deleted)
+# (an existing DIR is moved aside first, never deleted). Always uv's own Python build:
+# it ships the C headers (Python.h) that Triton compiles against when vLLM starts — a
+# distro Python often lacks them (python3.X-dev), and vLLM then fails at start-up.
 new_venv() {
   local dir="$1" ver="$2" uv
   uv="$(ensure_uv)" || return 1
   [ -e "$dir" ] && set_aside "$dir"
-  "$uv" venv --python "$ver" "$dir"
+  "$uv" venv --python "$ver" --python-preference only-managed "$dir"
 }
 
 # ── terminal UI: colours + spinner only on a real terminal (plain text in log files) ──

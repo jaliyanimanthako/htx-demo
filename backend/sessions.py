@@ -14,7 +14,7 @@ import cv2
 
 from backend import settings
 from backend.qwen_status import QwenUnavailable
-from exit_monitor import ExitMonitor, FastDetector, build_parser
+from apps.exit_monitor import ExitMonitor, FastDetector, build_parser
 
 STREAMS = ("original", "annotated", "combined")
 _URL = re.compile(r"^(rtsp|rtsps|rtmp|http|https)://", re.I)
@@ -27,6 +27,10 @@ class SessionError(ValueError):
 def resolve_source(source: str) -> str:
     """A stream URL, or a video file name inside BACKEND_VIDEO_DIR (no paths outside it)."""
     source = source.strip()
+    if source == settings.EXTERNAL_SOURCE:
+        source = settings.external_camera()["url"].strip()
+        if not _URL.match(source):
+            raise SessionError("External camera is not configured. Set sources.external_camera.url in config.toml")
     if _URL.match(source):
         return source
     path = (settings.VIDEO_DIR / source).resolve()
@@ -62,12 +66,14 @@ class Session:
         self._stop_requested = False
 
         if mode == "extinguisher":
-            import extinguisher_monitor as X
+            from apps import extinguisher_monitor as X
             parser = X.build_parser()
         else:
             parser = build_parser()
         args = parser.parse_args([resolve_source(source)])
-        args.loop = loop
+        settings.apply_monitor_config(args, "extinguishers" if mode == "extinguisher" else "exits", options)
+        args.ext_options = options
+        args.loop = loop and source != settings.EXTERNAL_SOURCE
         args.no_yoloe = False if mode in ("extinguisher", "combined") else not use_yoloe
         args.locate_url = settings.LOCATE_URL if use_locate and mode in ("exits", "combined") else None
         args.qwen_url = settings.QWEN_URL if use_qwen else None
@@ -101,7 +107,7 @@ class Session:
                 from backend.combined import CombinedMonitor
                 self.monitor = CombinedMonitor(self.args, self._fast, self._on_frame, self._on_event)
             elif self.mode == "extinguisher":
-                import extinguisher_monitor as X
+                from apps import extinguisher_monitor as X
                 self.monitor = X.ExtinguisherMonitor(self.args, detector=self._fast,
                     on_frame=self._on_frame, on_event=self._on_event)
             else:
@@ -115,7 +121,10 @@ class Session:
             self.status = "running"
             self.monitor.run()
             self.status = "stopped" if self._stop_requested else "finished"
-        except (Exception, SystemExit) as e:          # CLI monitors may raise SystemExit
+        except (Exception, SystemExit) as e:
+            if self._stop_requested:
+                self.status = "stopped"
+                return
             self.error_code = "qwen_unavailable" if isinstance(e, QwenUnavailable) else "demo_failed"
             self.status, self.error = "error", f"{type(e).__name__}: {e}"
             print(f"  [session {self.id}] error: {self.error}")
@@ -178,16 +187,17 @@ class SessionManager:
 
     def _fast_detector(self):
         if self._fast is None:
-            self._fast = FastDetector(build_parser().parse_args(["x"]).yoloe_model)
+            self._fast = FastDetector(settings.apply_monitor_config(build_parser().parse_args(["x"]), "exits").yoloe_model,
+                                      settings.CONFIG["exits"]["imgsz"])
         return self._fast
 
     def _detector(self, mode: str):
         if mode == "exits":
             return self._fast_detector()
         if self._ext is None:
-            import extinguisher_monitor as X
-            a = X.build_parser().parse_args(["x"])
-            self._ext = X.ExtinguisherDetector(a.yoloe_model, a.conf)
+            from apps import extinguisher_monitor as X
+            a = settings.apply_monitor_config(X.build_parser().parse_args(["x"]), "extinguishers")
+            self._ext = X.ExtinguisherDetector(a.yoloe_model, a.conf, settings.CONFIG["extinguishers"]["imgsz"])
         return self._ext
 
     def create(self, source: str, loop: bool = True, use_yoloe: bool = True,

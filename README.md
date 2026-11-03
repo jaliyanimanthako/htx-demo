@@ -281,9 +281,12 @@ If the ports are not reachable from the client, tunnel them:
 ## Running
 
 Every program starts from `run.py` in the project root (`python run.py` lists them). This
-section covers the main one, the **fire safety inspection**. Each monitor on its own, the
-backend and web app, the simpler runners, the live camera and the tools are in
-**[docs/running.md](docs/running.md)**.
+section covers the main one, the **fire safety inspection**, and its settings.
+**[docs/running.md](docs/running.md)** has the rest:
+
+- running the demo at a venue, step by step (camera, laptop, tablet);
+- one-time setup for the laptop and the camera;
+- each monitor on its own, the backend and web app, the simpler runners and the tools.
 
 ### Fire safety inspection: `python run.py inspect`
 

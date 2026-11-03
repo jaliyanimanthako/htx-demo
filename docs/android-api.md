@@ -26,7 +26,7 @@ message reference. The web app in `frontend/` uses the same API.
 ## Connecting from Android
 
 **Address.** `http://<laptop Wi-Fi IP>:8100`. The IP changes at every venue (the demo
-runbook, [run.md](run.md) step 2, prints it). Make the URL and the token settings in
+runbook, [running.md step 2](running.md#2-open-the-laptop-to-the-network-windows-administrator-powershell), prints it). Make the URL and the token settings in
 the app, not constants. `GET /api/health` needs no token: use it for a "Test
 connection" button.
 
@@ -193,7 +193,7 @@ events it sends back. This mode is exits only.
    ```
 
    - `<windows-host>` is Windows as seen from the backend in WSL; the runbook
-     ([run.md](run.md) step 6) prints the full address. Make it a setting in the app.
+     ([running.md step 6](running.md#6-connect-the-tablet)) prints the full address. Make it a setting in the app.
    - `use_locate: false` matters on the laptop, which has no LocateAnything.
    - The reply is the [session object](#session-object). Keep its `id`.
 2. **Picture:** read `GET /api/sessions/{id}/stream/annotated` (or `original`,

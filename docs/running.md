@@ -1,22 +1,286 @@
-# Running the other programs
+# Running
 
-The [README](../README.md#running) covers the main program, the **fire safety
-inspection** (`python run.py inspect`). This page covers the others: each monitor on its
-own, the backend and web app, the simpler runners, the live camera and the tools.
+Everything you can run, in one place:
 
-Every program starts from `run.py` in the project root: `python run.py` lists the
+1. [**The demo at a venue**](#the-demo-at-a-venue): step by step, from packing to
+   stopping. It covers the camera, the laptop and the tablet.
+2. [**One-time setup**](#one-time-setup): what to do once for the laptop and the camera.
+3. [**Other programs**](#other-programs): each monitor on its own, the backend and web
+   app, the simpler runners, and the tools.
+
+Every program starts from `run.py` in the project root. `python run.py` lists the
 commands, and `python run.py <command> -h` shows a command's options. The code is in
 `apps/` (`python -m apps.<module>` works too). The old script names also work as
 commands, for example `python run.py exit_monitor IMG_0451.MOV`.
 
-- [Exit monitor: python run.py exits](#exit-monitor-python-runpy-exits)
-- [Backend + web app (backend/, frontend/)](#backend--web-app-backend-frontend)
-- [Fire extinguishers: python run.py extinguishers (first version)](#fire-extinguishers-python-runpy-extinguishers-first-version)
-- [Other runners](#other-runners)
-- [Live camera (DJI Osmo Pocket 3)](#live-camera-dji-osmo-pocket-3)
-- [Tools](#tools)
+Related docs:
 
-## Exit monitor: `python run.py exits`
+- The inspection's settings (`config.toml`, choosing models) are in the
+  [README](../README.md#running).
+- The full camera guide is [live-camera.md](live-camera.md).
+- The API for the tablet app is [android-api.md](android-api.md).
+
+---
+
+## The demo at a venue
+
+This runs the demo on the dev laptop at a venue with its own Wi-Fi. The laptop needs
+the [one-time setup](#one-time-setup) first.
+
+**What runs where:**
+
+```
+Pocket 3 ──Wi-Fi, RTMP──► MediaMTX (Windows, :1935 in, :8554 out) ──► WSL: python run.py inspect
+                                                                         (exits + extinguishers on the laptop screen)
+Tablet app ──Wi-Fi──► Windows :8100 ──port forward──► WSL: backend (python run.py backend)
+Qwen3-VL-2B runs in WSL (tmux session "qwen"); both the inspection and the backend use it.
+```
+
+**What changes at a new venue:**
+
+- the laptop's Wi-Fi IP, which the camera (in Mimo) and the tablet app both need;
+- the camera, the phone and the tablet must all join the venue Wi-Fi;
+- Windows treats the new network as **Public**. The firewall rules already allow
+  Public networks; step 2 checks this.
+
+Step 2 prints every address you need, so you don't have to look anything up.
+
+### Before you leave
+
+- [ ] Charge the camera, the phone with DJI Mimo, and the tablet. Bring the laptop
+      charger: on battery the GPU runs slower.
+- [ ] In WSL, run `cd ~/htx-demo && conda activate htx && python tests/test_core.py`. It
+      should print `16/16 passed`.
+- [ ] Download every model you plan to show, while you still have fast internet:
+  - Qwen: `bash server/start_laptop.sh 2b` (the default). Also run it with `2b-fp8` if
+    you want to show that one; each first start downloads the model.
+  - YOLOE: `python run.py inspect --list-models` shows which are `downloaded`. Running
+    the inspection once with `--yoloe <name>` downloads another one.
+- [ ] Note the backend token for the tablet app: `grep BACKEND_TOKEN ~/htx-demo/.env`.
+- [ ] Bring a backup network: a travel router, or a hotspot on a second phone. Venue
+      Wi-Fi often blocks devices from reaching each other, or needs a login page that
+      the camera can't use.
+- [ ] Optional: copy a recorded video to `~/htx-demo` as a fallback if the camera
+      fails.
+
+### 1. Join the Wi-Fi and check it is usable
+
+Connect the laptop to the venue Wi-Fi. The network must meet three conditions:
+
+- **One network for everything:** the laptop, the camera, the phone with Mimo and the
+  tablet.
+- **No login page.** The camera can't get past a "click to accept" page.
+- **Devices can reach each other.** Guest networks usually block this. Step 6 tests it.
+
+If any of these fails, switch everything to your backup network and carry on with step 2.
+
+### 2. Open the laptop to the network (Windows, Administrator PowerShell)
+
+Open **PowerShell as Administrator** and paste this block. It is safe to run again, and
+you must run it again after every reboot, because WSL's internal address changes.
+
+```powershell
+$port = 8100
+$wsl  = (wsl hostname -I).Trim().Split(' ')[0]          # WSL's internal IP (changes after a reboot)
+netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>&1 | Out-Null
+netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=$port connectaddress=$wsl connectport=$port
+if (-not (Get-NetFirewallRule -DisplayName "htx backend 8100" -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -DisplayName "htx backend 8100" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port | Out-Null
+}
+Set-NetFirewallRule -DisplayName "htx backend 8100" -Profile Private,Public -RemoteAddress LocalSubnet
+if (-not (Get-NetFirewallRule -DisplayName "MediaMTX" -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -DisplayName "MediaMTX" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 1935,8554 | Out-Null
+}
+$ip = (Get-NetIPAddress -InterfaceAlias "Wi-Fi" -AddressFamily IPv4).IPAddress
+""
+"Laptop Wi-Fi IP       : $ip"
+"DJI Mimo RTMP address : rtmp://${ip}:1935/live/x2"
+"Tablet app backend URL: http://${ip}:${port}"
+"Tablet browser check  : http://${ip}:${port}/api/health"
+```
+
+Keep the four printed lines visible; the next steps use them. The block:
+
+- forwards port 8100 on the Wi-Fi to the backend in WSL (the tablet can't reach WSL
+  directly);
+- lets devices on the same Wi-Fi, and only them, through the firewall on port 8100 and
+  on the MediaMTX ports 1935 and 8554.
+
+The backend still needs the token, so others on the venue Wi-Fi can't use it.
+
+### 3. Start Qwen and the backend (WSL terminal 1)
+
+```bash
+conda activate htx && cd ~/htx-demo
+bash server/start_laptop.sh       # Qwen; wait for "Qwen is up" (about 1 min) or "already running"
+python run.py backend             # leave it running
+```
+
+- The backend must say **port 8100**. If it says 8101 or higher, an old backend is
+  still running: stop it with `pkill -f "run.py backend"` and start this one again. The
+  port forward only covers 8100.
+- Start Qwen before anything else that uses the GPU, because vLLM reserves its memory
+  when it starts.
+
+Steps 4 and 5 can be done while Qwen loads.
+
+### 4. Start MediaMTX (Windows)
+
+Run `C:\mediamtx\mediamtx.exe` from its own folder. Its log should say
+`configuration loaded`. Keep the window open.
+
+### 5. Start the camera stream (phone with DJI Mimo)
+
+1. Join the **phone** to the venue Wi-Fi. If Android warns that the Wi-Fi has no
+   internet, choose to stay connected.
+2. Power on the Pocket 3: rotate the touchscreen clockwise, or press the Shutter/Record
+   button. Open Mimo and wait until the live view appears.
+3. Slide the bottom menu to **LIVESTREAM**, choose **RTMP**, then tap **Start
+   Livestreaming Settings**. Wait about 15 seconds on that screen.
+4. Under **Camera Network Status**, connect the **camera** to the same Wi-Fi. Enter the
+   password if asked.
+5. Set the streaming address to the **DJI Mimo RTMP address** printed in step 2, for
+   example `rtmp://192.168.50.22:1935/live/x2`.
+   - There is no stream key.
+   - Keep the path exactly `live/x2`, because the WSL commands use the same name.
+   - Don't use the WSL `$WIN` address here.
+6. Optionally, swipe for more settings and lower the quality. A lower resolution or
+   bitrate can cut the delay.
+7. Tap **Start Livestream**. On iPhone, allow Local Network access if asked.
+8. **Check the MediaMTX window.** It should show `is publishing to path 'live/x2'`. If
+   nothing appears, see [If something goes wrong](#if-something-goes-wrong).
+9. Keep Mimo open with the phone screen on for the whole demo.
+
+The menu names come from DJI's setup guide and may differ a little between Mimo
+versions.
+
+### 6. Connect the tablet
+
+1. Join the **tablet** to the same Wi-Fi.
+2. In the tablet's browser, open the **Tablet browser check** URL from step 2. It must
+   show `{"ok":true,"auth_required":true}`. If it times out, see
+   [If something goes wrong](#if-something-goes-wrong).
+3. In the app, enter the **Tablet app backend URL** and the token.
+4. To show the **Pocket 3's** picture on the tablet (session mode), the app also needs
+   the camera stream's address as the backend sees it. Print it in WSL with
+   `echo rtsp://$(ip route show default | awk '{print $3}'):8554/live/x2`.
+   - Session mode shows exits only.
+   - With the tablet's own camera (live mode), the app needs no address; it can show
+     exits or extinguishers.
+
+The backend runs one tablet session at a time.
+
+### 7. Run the inspection on the laptop screen (WSL terminal 2)
+
+```bash
+conda activate htx && cd ~/htx-demo
+WIN=$(ip route show default | awk '{print $3}')                       # Windows, as seen from WSL
+python run.py camera-check rtsp://$WIN:8554/live/x2                   # optional: picture arrives? q quits
+python run.py inspect rtsp://$WIN:8554/live/x2 --save results/venue_$(date +%H%M).mp4
+```
+
+- The window shows the original next to the annotated video, with an exit panel and an
+  extinguisher panel. Keys: `q` quits, `space` pauses.
+- Reports go to `results/fire_safety_live/`.
+- Settings such as frame rates, resolution and models are in `config.toml`; see the
+  [README](../README.md#running).
+- **Fallback without the camera:** `python run.py inspect <video file> --loop`.
+- The inspection and one tablet session can run at the same time. Tested on a recorded
+  video: the tablet's round trip stayed at about 30 ms, and the inspection ran at about
+  40 ms per frame.
+
+### Stopping
+
+1. Press `q` in the inspection window.
+2. Press `Ctrl+C` in the backend terminal.
+3. Stop the livestream in Mimo, close MediaMTX, and turn off the camera.
+4. Free the GPU: `bash server/stop_all.sh qwen`.
+
+The port forward and firewall rules can stay; they only let in devices on the same
+network, and only on the demo ports.
+
+### If something goes wrong
+
+| Symptom | Cause and fix |
+|---|---|
+| Tablet: **connection timed out** | (1) The laptop was rebooted, or WSL restarted, since step 2: run the step 2 block again. (2) The tablet is on another network: its IP must start like the laptop's (e.g. `192.168.50.x`). (3) The Wi-Fi blocks devices from reaching each other: switch to your backup network. |
+| Tablet: **connection refused** | The backend isn't running, or it runs on another port than 8100 (step 3). |
+| Tablet: **401** or WebSocket closed at once | Wrong token. Check it with `grep BACKEND_TOKEN ~/htx-demo/.env`. |
+| Tablet: **already running … stop it first** | The backend runs one tablet session at a time. Close the session in the app, or restart the backend. |
+| Mimo **can't find the camera** | Check that the phone's Wi-Fi and Bluetooth are both on and that Mimo is up to date. A DJI Mic 2 on 2.4 GHz blocks Mimo: switch the camera to 5.8 GHz under Wireless Connection, or disconnect the mic. |
+| Mimo: **Livestream failed**, or nothing in the MediaMTX log | The RTMP address must be the **Wi-Fi IP printed in step 2** (it changes per venue), not the WSL address. The camera must be on the same Wi-Fi. A login page also blocks the camera: use the backup network. If the firewall rule for TCP 1935 is missing, run the step 2 block again. |
+| Inspection: **No frames from rtsp://… after 30 s** | MediaMTX isn't running, or the camera isn't publishing (check its log). In WSL, use `$WIN` (step 7), not the Wi-Fi IP. |
+| Inspection or backend: **Cannot reach Qwen** | Run `bash server/status.sh`, then `bash server/start_laptop.sh`. |
+| **Qwen doesn't come up on a network without internet** | The models are on the laptop, but Qwen may wait on Hugging Face. Start it with `bash server/stop_all.sh qwen` and then `HF_HUB_OFFLINE=1 bash server/start_laptop.sh`. This only works when no other tmux session is open: Qwen runs in tmux, and otherwise it won't see the setting. |
+| Frequent "stream lost — reconnecting" | Weak Wi-Fi, the phone went to sleep, or the camera is hot or low on battery. Runs reconnect by themselves and end only after 30 s without frames. |
+
+### Notes
+
+- **The two IPs are easy to mix up.** Mimo and the tablet use the laptop's **Wi-Fi IP**
+  (printed in step 2). Commands in WSL use **`$WIN`**, Windows as seen from inside WSL.
+- **Only YOLOE and Qwen run here.** LocateAnything doesn't fit in the laptop's 8 GB GPU,
+  so the demo runs YOLOE + Qwen3-VL-2B.
+- **Watch the verdicts.** Qwen-2B is the weakest Qwen model. On a drawn test scene, its
+  verdicts flipped between "partly blocked" and "clear", so check them on real footage.
+- **The first picture can take a few seconds to appear.**
+- **What has run with the real camera so far:**
+  - The exit monitor ran for about 2 minutes on the Pocket 3 stream: 3,096 frames, 83
+    dropped, 22 ms per frame.
+  - The combined inspection hasn't run on the camera yet.
+  - To measure the camera's delay, use `python run.py camera-check --clock` (see
+    [live-camera.md](live-camera.md)).
+
+---
+
+## One-time setup
+
+### Laptop
+
+The dev laptop already has all of this. For another laptop, start with the README's
+[Setup](../README.md#setup) (WSL, the Python environment, the Qwen server), then:
+
+1. **MediaMTX:** download MediaMTX for Windows from its GitHub releases page, and unzip
+   it to `C:\mediamtx`.
+2. **Backend packages**, if `python run.py backend` reports a missing `fastapi`:
+   `pip install "fastapi==0.121.3" "uvicorn[standard]==0.38.0"` (both are in
+   `requirements.txt`).
+3. **Backend token:**
+   `echo "BACKEND_TOKEN=$(python -c 'import secrets; print(secrets.token_hex(16))')" >> .env`.
+   The tablet app needs it.
+4. **Port forward and firewall rules:** the block in [step 2](#2-open-the-laptop-to-the-network-windows-administrator-powershell)
+   creates them.
+5. **Models:** see [Before you leave](#before-you-leave).
+
+### Camera and DJI Mimo
+
+1. **Charge the camera.** Firmware updates won't run below 15%. Charge it fully before a
+   demo.
+2. **Install DJI Mimo.**
+   - Android 9 or later: download the APK from
+     [DJI's Pocket 3 downloads page](https://www.dji.com/osmo-pocket-3/downloads). It
+     isn't on Google Play, and you should avoid third-party APK sites.
+   - iPhone: get it from the App Store.
+3. **Open Mimo and allow its permissions:** Nearby devices, Location, and photos/media.
+   Without Nearby devices and Location, the app can't find the camera over Bluetooth.
+4. **Android only:**
+   - Go to Settings → Apps → DJI Mimo → Battery and choose **Unrestricted**.
+   - On Samsung, also turn off *Intelligent Wi-Fi → Switch to mobile data*.
+5. **Turn on the phone's Wi-Fi and Bluetooth.** Mimo uses both.
+6. **Power on the Pocket 3:** rotate the touchscreen clockwise, or press the
+   Shutter/Record button.
+7. **Connect in Mimo:**
+   - On the home screen, tap the camera icon, choose **Osmo Pocket 3** and follow the
+     prompts. Keep the camera next to the phone.
+   - Activate it when asked. It may ask you to sign in to a DJI account.
+8. **Install a firmware update if Mimo offers one.** It takes about 2 minutes. Don't
+   power off the camera while it runs.
+9. **Check it works:** Mimo should show the camera's live view.
+
+---
+
+## Other programs
+
+### Exit monitor: `python run.py exits`
 
 ```bash
 .venv/bin/python run.py exits IMG_0451.MOV            # URLs from .env
@@ -57,7 +321,7 @@ newest frame as soon as the previous answer is back (and `--la-interval` has pas
 **Output** – `results/exit_monitor_<video>/report.json` (status history, blockers and a
 snapshot per exit, all events) and `exit<id>_<time>_<status>.jpg` snapshots.
 
-## Backend + web app (`backend/`, `frontend/`)
+### Backend + web app (`backend/`, `frontend/`)
 
 The detection pipeline runs as a **FastAPI service on the GPU server** (API only). The
 web app is hosted **separately**, on whatever machine you like, and connects to the
@@ -151,7 +415,7 @@ request and response examples, is in [Backend API reference](android-api.md).
 `python run.py exits --stream` still works for quick checks: an all-in-one browser view
 (`/stream`), plus `/stream/original`, `/stream/annotated` and `/state`.
 
-## Fire extinguishers: `python run.py extinguishers` (first version)
+### Fire extinguishers: `python run.py extinguishers` (first version)
 
 This tool finds fire extinguishers and reads the expiry or service date on their label
 or inspection tag. It needs only YOLOE and the Qwen server; LocateAnything is not used.
@@ -221,7 +485,7 @@ Results with Qwen3-VL-4B on the walk-by videos, at about 1.5 s per read:
 A date is read only when the sticker is close (the extinguisher fills about a third or
 more of the frame height). A second or two of steady view is enough.
 
-## Other runners
+### Other runners
 
 | Script | What it does | Example |
 |---|---|---|
@@ -235,7 +499,7 @@ more of the frame height). A second or two of steady view is enough.
 `openrouter` (default, `qwen/qwen3-vl-8b-instruct`), `qwen` (DashScope), `openai`.
 All live runners accept `--stream`, `--save`, `--loop`, `--no-display`.
 
-## Live camera (DJI Osmo Pocket 3)
+### Live camera (DJI Osmo Pocket 3)
 
 Every runner takes a live camera as its source: a stream URL or a webcam index. For the
 Pocket 3 over Wi-Fi, the camera pushes RTMP to a MediaMTX server, and the runners read
@@ -254,7 +518,7 @@ stream drops and ends the run after 30 s without frames. Times in logs and repor
 seconds since the first frame. Setup (MediaMTX, DJI Mimo, WSL2 networking, USB), latency
 and troubleshooting are in **[docs/live-camera.md](live-camera.md)**.
 
-## Tools
+### Tools
 
 ```bash
 python run.py camera-check rtsp://<host>:8554/live/x2 --clock   # camera link check, no models

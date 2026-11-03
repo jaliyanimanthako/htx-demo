@@ -1,5 +1,8 @@
 # Backend API for the Android app
 
+For the integrated tablet demo, start with [Setup and run the demo](running.md). Authenticated `GET /api/sources` reports the configured external camera; create a combined session with `source: "external-camera"` to use it. This guide also describes the individual detection modes.
+
+
 This page is for whoever builds the Android tablet app. It covers what the backend can
 do for the app today and what it can't yet, how to connect from Android, and the full
 message reference. The web app in `frontend/` uses the same API.
@@ -9,8 +12,8 @@ message reference. The web app in `frontend/` uses the same API.
 | The app wants to… | Use | Status |
 |---|---|---|
 | Detect exits **or** extinguishers on the tablet's own camera | [Live mode](#live-mode-on-android-tablet-camera): `WS /api/live` | available |
-| Show the Pocket 3's picture with detections | [Session mode](#session-mode-on-android-pocket-3-picture): `POST /api/sessions`, an MJPEG stream and an events WebSocket | available, **exits only** |
-| Get exits and extinguishers from one connection | — | **not yet**: one mode per connection |
+| Show the Pocket 3's picture with detections | [Session mode](#session-mode-on-android-pocket-3-picture): `POST /api/sessions`, an MJPEG stream and an events WebSocket | available, including **combined** detection |
+| Get exits and extinguishers from one connection | `mode: "combined"` | available for tablet-camera live results and server-side sessions |
 | Ask Qwen its own question, about an image or as free text | — | **not yet**: `POST /api/sessions/{id}/command` returns 501 |
 
 - **Qwen already runs inside both modes.** It confirms exits, checks whether an
@@ -33,8 +36,7 @@ connection" button.
 **Token.**
 
 - REST calls and MJPEG streams: header `Authorization: Bearer <token>`, or `?token=<token>`.
-- **WebSockets: only `?token=<token>` in the URL.** The server reads a WebSocket's token
-  only from the URL, so an `Authorization` header set with OkHttp is ignored.
+- **WebSockets:** use `?token=<token>` in the URL or an `Authorization: Bearer <token>` header.
 
 **Cleartext HTTP.** The backend speaks plain `http://` and `ws://`. Android 9 (API 28)
 and later block cleartext traffic by default, so allow it:

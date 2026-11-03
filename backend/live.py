@@ -14,6 +14,7 @@ The "ready" reply says how big the frames should be (send_width, jpeg_quality):
 extinguisher mode needs full-resolution frames to read the dates on a sticker.
 """
 
+from collections import deque
 import struct
 import threading
 import time
@@ -30,6 +31,7 @@ MODES = {
     # send_width / jpeg_quality: what the browser should send for this mode
     "exits": {"title": "Exit obstruction", "send_width": 960, "jpeg_quality": 0.75},
     "extinguisher": {"title": "Fire extinguisher", "send_width": 1920, "jpeg_quality": 0.9},
+    "combined": {"title": "Fire Safety Demo", "send_width": 960, "jpeg_quality": 0.8},
 }
 
 HEADER = struct.Struct("<Id")          # seq, video time
@@ -65,18 +67,41 @@ class LiveSession:
         self.created = time.time()
         options = options or {}
         self.skipped = []
-        if mode == "exits":
+        self.out_dir = settings.OUT_DIR / f"{mode}_live_{time.strftime('%Y%m%d-%H%M%S')}_{self.id}"
+        if mode == "combined":
+            self._init_combined(detectors, use_qwen, options)
+        elif mode == "exits":
             self._init_exits(detectors, use_yoloe, use_locate, use_qwen, options)
         else:
             self._init_extinguisher(detectors, use_qwen, options)
-        self.out_dir = settings.OUT_DIR / f"{mode}_live_{time.strftime('%Y%m%d-%H%M%S')}_{self.id}"
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.monitor.snap_dir = self.out_dir
         self.monitor.start_workers()
+        if mode == "combined":
+            self.models["qwen"] = self.monitor.qwen_active
+            if use_qwen and not self.monitor.qwen_active:
+                self.skipped.append("Qwen")
         self._lock = threading.Lock()   # one frame at a time through the pipeline
         self._sent_events = 0
         self.frames = 0
-        self.times = []
+        self.times = deque(maxlen=60)
+
+    def _init_combined(self, detectors, use_qwen, options):
+        from backend.combined import CombinedMonitor
+        args = settings.apply_monitor_config(build_parser().parse_args(["live"]), "exits", options)
+        args.no_yoloe, args.locate_url = False, None
+        args.qwen_url = settings.QWEN_URL if use_qwen else None
+        args.qwen_requested, args.require_qwen = use_qwen, False
+        args.ext_options = options
+        args.snapshots = False  # live tablet frames are never saved
+        args.no_display, args.stream, args.save, args.log_frames = True, None, None, False
+        args.out_dir = str(self.out_dir)
+        for key in ("hold", "name_every", "recheck", "confirm_timeout"):
+            if options.get(key) is not None:
+                setattr(args, key, float(options[key]))
+        self.args = args
+        self.models = {"yoloe": True, "locate_anything": False, "qwen": False, "qwen_requested": use_qwen}
+        self.monitor = CombinedMonitor(args, (detectors("exits"), detectors("extinguisher")))
 
     def _qwen_url(self, use_qwen: bool):
         """Qwen URL if wanted and reachable; a server that is down is skipped (and reported)."""
@@ -88,7 +113,7 @@ class LiveSession:
         return settings.QWEN_URL
 
     def _init_exits(self, detectors, use_yoloe, use_locate, use_qwen, options):
-        args = build_parser().parse_args(["live"])
+        args = settings.apply_monitor_config(build_parser().parse_args(["live"]), "exits", options)
         args.no_yoloe = not use_yoloe
         args.locate_url = settings.LOCATE_URL if use_locate else None
         if args.locate_url and not _reachable(args.locate_url.rstrip("/") + "/health"):
@@ -108,7 +133,7 @@ class LiveSession:
 
     def _init_extinguisher(self, detectors, use_qwen, options):
         from apps import extinguisher_monitor as X
-        args = X.build_parser().parse_args(["live"])
+        args = settings.apply_monitor_config(X.build_parser().parse_args(["live"]), "extinguishers", options)
         args.qwen_url = self._qwen_url(use_qwen)
         args.no_qwen = not args.qwen_url
         args.no_display, args.stream, args.save, args.log_frames = True, None, None, False
@@ -129,7 +154,7 @@ class LiveSession:
         seq, vt, img = parse_frame(message)
         with self._lock:
             t0 = time.time()
-            if self.mode == "exits":
+            if self.mode in ("exits", "combined"):
                 proc, fast_info, la_merged, _ = self.monitor.step(img, vt)
             else:
                 proc, fast_info, _ = self.monitor.step(img, vt)
@@ -145,6 +170,8 @@ class LiveSession:
             "proc_ms": round(1000 * (time.time() - t0), 1),
             "yoloe_ms": round(fast_info[1], 1) if fast_info else None,
             "locate_update": la_merged > 0,
+            "date_reading_enabled": bool(self.models["qwen"]),
+            "qwen_active": bool(self.models["qwen"]),
             "events": [{"video_time_s": round(t, 2), "text": m, "status": st} for t, m, st in events],
         })
         return result

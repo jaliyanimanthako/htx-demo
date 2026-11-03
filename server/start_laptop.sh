@@ -21,7 +21,7 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/server/_lib.sh"
 config_qwen_model() {   # [models] qwen_model in config.toml (nothing if unset)
-  python3 - "$ROOT/config.toml" <<'PY' 2>/dev/null
+  python3 - "${HTX_CONFIG:-$ROOT/config.toml}" <<'PY' 2>/dev/null
 import sys, tomllib
 print(tomllib.load(open(sys.argv[1], "rb")).get("models", {}).get("qwen_model", ""))
 PY

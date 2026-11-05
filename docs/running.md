@@ -164,7 +164,7 @@ page is static files and holds no token.
 
 ```bash
 conda activate htx && cd ~/htx-demo
-bash server/start_laptop.sh       # Qwen; wait for "Qwen is up" (about 1 min) or "already running"
+bash server/start_laptop.sh        # Qwen; wait for "Qwen is up" (about 1 min) or "already running" ... GPU_UTIL=0.86 MAX_LEN=2048 bash server/start_laptop.sh 4b-fp8
 echo rtsp://$(ip route show default | awk '{print $3}'):8554/live/x2   # the camera URL as WSL sees it
 python run.py backend             # leave it running
 ```

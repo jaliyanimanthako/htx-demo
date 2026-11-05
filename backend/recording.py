@@ -3,7 +3,9 @@ Session recordings: each camera / stream session is saved as two videos in
 <out_dir>/recordings/ ([server] record, record_fps in config.toml):
 
     <name>_original.mkv   the frames the pipeline analysed (replay: python run.py inspect <file>)
-    <name>_annotated.mkv  the same frames as the viewer saw them, with boxes and statuses
+    <name>_annotated.mkv  the same frames as the viewer saw them, with boxes and statuses,
+                          stamped bottom left with the clock time each frame arrived and
+                          t= the session time used in report.json and the events
 
 Frames are encoded on a background thread, so recording never slows the pipeline.
 The videos play in real time: the previous frame repeats until the next one
@@ -20,6 +22,7 @@ import numpy as np
 
 from backend import settings
 from backend.annotations import draw_annotations
+from core.drawing import text_scale
 
 KINDS = ("original", "annotated")
 _open = set()                       # recorders not closed yet; close_all() at backend shutdown
@@ -44,6 +47,21 @@ def _fit(img, size):
     return out
 
 
+def _stamp(img, wall: float, video_time=None):
+    """Copy of img with the clock time (and session time t=) bottom left, to match against logs."""
+    text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(wall)) + f".{int(wall % 1 * 1000):03d}"
+    if video_time is not None:
+        text += f"  t={video_time:.2f}s"
+    out = img.copy()
+    s, th = text_scale(out)
+    (tw, tht), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, s, th)
+    pad, h = max(4, tht // 3), out.shape[0]
+    cv2.rectangle(out, (0, h - tht - base - 2 * pad), (tw + 2 * pad, h), (0, 0, 0), -1)
+    cv2.putText(out, text, (pad, h - base - pad), cv2.FONT_HERSHEY_SIMPLEX, s,
+                (255, 255, 255), th, cv2.LINE_AA)
+    return out
+
+
 class Recorder:
     def __init__(self, name: str):
         self.paths = {kind: settings.OUT_DIR / "recordings" / f"{name}_{kind}.mkv" for kind in KINDS}
@@ -59,12 +77,13 @@ class Recorder:
         with _open_lock:
             _open.add(self)
 
-    def add(self, original, annotated=None, result=None):
-        """Queue one frame; annotated=None draws `result` (live-mode JSON) onto original."""
+    def add(self, original, annotated=None, result=None, video_time=None):
+        """Queue one frame; annotated=None draws `result` (live-mode JSON) onto original.
+        video_time: the frame's session time, stamped on the annotated video next to the clock."""
         if self._closing.is_set():
             return
         try:
-            self._queue.put_nowait((time.monotonic(), original, annotated, result))
+            self._queue.put_nowait((time.monotonic(), time.time(), original, annotated, result, video_time))
         except queue.Full:
             pass                        # encoder behind: the previous frame repeats instead
 
@@ -79,12 +98,12 @@ class Recorder:
         try:
             while not (self._closing.is_set() and self._queue.empty()):
                 try:
-                    t, original, annotated, result = self._queue.get(timeout=0.2)
+                    t, wall, original, annotated, result, video_time = self._queue.get(timeout=0.2)
                 except queue.Empty:
                     continue
                 if annotated is None:
                     annotated = draw_annotations(original, result)
-                frames = {"original": original, "annotated": annotated}
+                frames = {"original": original, "annotated": _stamp(annotated, wall, video_time)}
                 if self._last is None:
                     self._start(t, frames)
                 else:

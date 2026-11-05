@@ -177,7 +177,7 @@ class LiveSession:
             "events": [{"video_time_s": round(t, 2), "text": m, "status": st} for t, m, st in events],
         })
         if self.recorder:
-            self.recorder.add(img, result=result)   # annotated as the tablet overlay draws it
+            self.recorder.add(img, result=result, video_time=vt)   # annotated as the tablet overlay draws it
         return result
 
     def reset(self):

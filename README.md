@@ -1,6 +1,6 @@
 # Exit Obstruction Monitor
 
-Tablet integration: see [Setup and run the demo](docs/running.md) for shared configuration, both backend machine setups, and the new External camera source.
+Tablet integration: see [Setup and run the demo](run_demo/running.md) for shared configuration, both backend machine setups, and the new External camera source.
 
 
 Detects **exits** (doors, glass doors, doorways) in video from a handheld camera and
@@ -35,7 +35,7 @@ boxes, bin); items on desks are dropped by the floor check.*
 2. [Why both YOLOE and LocateAnything?](#why-both-yoloe-and-locateanything)
 3. [Repository layout](#repository-layout)
 4. [Setup](#setup) — client, GPU server, `.env`
-5. [Running](#running) — the fire safety inspection (everything else: [docs/running.md](docs/running.md))
+5. [Running](#running) — the fire safety inspection (everything else: [run_demo/running.md](run_demo/running.md))
 6. [Backend API reference](#backend-api-reference) — for building your own app on the backend
 7. [How decisions are made](#how-decisions-are-made)
 8. [Measured performance](#measured-performance)
@@ -56,7 +56,7 @@ LocateAnything and Qwen run on the GPU server without blocking the live view.
 Qwen receives video images; tracking selects the crops and triggers scene checks.
 Exit memory stabilizes each status before it is displayed and logged.
 
-Simpler variants are also included (see [Other runners](docs/running.md#other-runners)).
+Simpler variants are also included (see [Other runners](run_demo/running.md#other-runners)).
 
 ---
 
@@ -137,6 +137,7 @@ core/                shared library (no entry points)
 engines/
   qwen_engine.py     OpenAI-compatible VLM client (vLLM, OpenRouter, DashScope, OpenAI)
   locate_engine.py   LocateAnything server client + answer parser
+run_demo/            venue demo: run_windows.cmd + run_wsl.sh, README.md (one page), running.md
 server/              GPU-server scripts: start_all.sh / status.sh / stop_all.sh, setup, serve
 tests/test_core.py   offline tests for parsing / rules / LocateAnything output / live input
 backend/             FastAPI service: live mode (frames in, boxes out), sessions, token auth
@@ -246,7 +247,7 @@ bash server/serve_locate.sh               # GPU 1 by default, port 8020+ (first 
 Endpoints: `GET /health`, `POST /detect {image, categories, mode}`,
 `POST /ground {image, phrase}`. Boxes come back on a 0–1000 scale.
 
-**Backend for the web app** — see [Backend + web app](docs/running.md#backend--web-app-backend-frontend):
+**Backend for the web app** — see [Backend + web app](run_demo/running.md#backend--web-app-backend-frontend):
 `BACKEND_TOKEN=<secret> bash server/run_backend.sh` (in tmux, after `setup_monitor.sh`).
 
 **Optional — run the monitor on the server too**
@@ -285,10 +286,11 @@ If the ports are not reachable from the client, tunnel them:
 
 Every program starts from `run.py` in the project root (`python run.py` lists them). This
 section covers the main one, the **fire safety inspection**, and its settings.
-**[docs/running.md](docs/running.md)** has the rest:
+**[run_demo/running.md](run_demo/running.md)** has the rest:
 
 - what runs where: the backend, the tablet app, the tablet web page and the web app;
-- running the demo at a venue, step by step (camera, laptop, tablet);
+- running the demo at a venue, step by step (camera, laptop, tablet); the one-page
+  version and the two start scripts are in [run_demo/](run_demo/README.md);
 - the backend on a GPU server, and the backend's settings;
 - one-time setup for the laptop, the tablet app and the camera;
 - each monitor on its own, the backend and web app, the tablet web page, the simpler
@@ -420,7 +422,7 @@ The log prints one line per frame, with the `EXITS …` and `EXT …` parts sepa
   task, the models and the settings used;
 - `exits/` and `extinguishers/`: each task's own report and snapshots.
 
-Photos still go through `python run.py extinguishers` ([docs/running.md](docs/running.md)).
+Photos still go through `python run.py extinguishers` ([run_demo/running.md](run_demo/running.md)).
 
 There are two YOLOE models rather than one with both prompt lists. YOLOE gives each box
 its single best-scoring prompt, so the extinguisher decoys ("red bag", "red trash can")

@@ -1,6 +1,6 @@
 # Backend API for the Android app
 
-For the integrated tablet demo, start with [Setup and run the demo](running.md). Authenticated `GET /api/sources` reports the configured external camera; create a combined session with `source: "external-camera"` to use it. This guide also describes the individual detection modes.
+For the integrated tablet demo, start with [Setup and run the demo](../run_demo/running.md). Authenticated `GET /api/sources` reports the configured external camera; create a combined session with `source: "external-camera"` to use it. This guide also describes the individual detection modes.
 
 
 This page is for whoever builds the Android tablet app. It covers what the backend can
@@ -33,7 +33,7 @@ message reference. The web app in `frontend/` uses the same API.
 ## Connecting from Android
 
 **Address.** `http://<laptop Wi-Fi IP>:8100`. The IP changes at every venue (the demo
-runbook, [running.md step 2](running.md#2-open-the-laptop-to-the-network-windows-administrator-powershell), prints it). Make the URL and the token settings in
+runbook, [running.md step 2](../run_demo/running.md#2-open-the-laptop-to-the-network-windows-administrator-powershell), prints it). Make the URL and the token settings in
 the app, not constants. `GET /api/health` needs no token: use it for a "Test
 connection" button.
 
@@ -200,7 +200,7 @@ events it sends back. A session runs exits only unless the body asks for
    ```
 
    - `<windows-host>` is Windows as seen from the backend in WSL; the runbook
-     ([running.md step 3](running.md#3-start-qwen-and-the-backend-wsl-terminal-1)) prints the full address. Make it a setting in the app.
+     ([running.md step 3](../run_demo/running.md#3-start-qwen-and-the-backend-wsl-terminal-1)) prints the full address. Make it a setting in the app.
    - `use_locate: false` matters on the laptop, which has no LocateAnything.
    - The reply is the [session object](#session-object). Keep its `id`.
 2. **Picture:** read `GET /api/sessions/{id}/stream/annotated` (or `original`,

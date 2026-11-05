@@ -13,6 +13,10 @@ Everything you can run, in one place:
 6. [**Other programs**](#other-programs): each monitor on its own, the web app, the tablet web
    page, the simpler runners, the tools and the tests.
 
+At a venue, once you have done the demo before, the one page in [README.md](README.md) is
+enough. Its two scripts in this folder, `run_windows.cmd` and `run_wsl.sh`, do steps 2–4
+of [the demo at a venue](#the-demo-at-a-venue).
+
 Every program starts from `run.py` in the project root. `python run.py` lists the
 commands, and `python run.py <command> -h` shows a command's options. The code is in
 `apps/` (`python -m apps.<module>` works too). The old script names also work as
@@ -21,8 +25,8 @@ commands, for example `python run.py exit_monitor IMG_0451.MOV`.
 Related docs:
 
 - The inspection (`python run.py inspect`) and its settings: [README](../README.md#running).
-- The camera: [live-camera.md](live-camera.md).
-- The backend API: [android-api.md](android-api.md).
+- The camera: [live-camera.md](../docs/live-camera.md).
+- The backend API: [android-api.md](../docs/android-api.md).
 - The tablet app, how to build it and how it works inside:
   [android-app/README.md](../android-app/README.md).
 - The tablet web page: [web-tablet/README.md](../web-tablet/README.md).
@@ -67,15 +71,19 @@ The backend reads the camera stream while the tablet shows **External camera**. 
 inspection can show the same stream on the laptop screen
 ([step 7](#7-optional-the-inspection-on-the-laptop-screen-wsl-terminal-2)).
 
-**Short version**, once you have done it before:
+**Short version**, once you have done it before ([README.md](README.md) has it on one page):
 
-1. Windows: run the [step 2](#2-open-the-laptop-to-the-network-windows-administrator-powershell)
-   block. It prints the addresses for Mimo and the tablet.
-2. WSL: `bash server/start_laptop.sh` (or ` GPU_UTIL=0.86 MAX_LEN=2048 bash server/start_laptop.sh 4b-fp8`), check the camera URL in `config.toml`, then
-   `python run.py backend` ([step 3](#3-start-qwen-and-the-backend-wsl-terminal-1)).
-3. Windows: start MediaMTX. Phone: start the livestream in Mimo to the printed RTMP address.
+1. Windows: double-click `run_demo\run_windows.cmd` and allow administrator rights. It does
+   [step 2](#2-open-the-laptop-to-the-network-windows-administrator-powershell) and
+   [step 4](#4-start-mediamtx-windows), and prints the addresses for Mimo and the tablet.
+2. WSL: `bash run_demo/run_wsl.sh` (or `GPU_UTIL=0.86 MAX_LEN=2048 bash run_demo/run_wsl.sh 4b-fp8`).
+   It does [step 3](#3-start-qwen-and-the-backend-wsl-terminal-1) in the background, then
+   prints a status check, the addresses and the token.
+3. Phone: start the livestream in Mimo to the printed RTMP address. Then
+   `bash run_demo/run_wsl.sh check` shows the camera as streaming.
 4. Tablet: enter the backend URL and the token in **Settings**, tap **Start demo** and pick
    a source.
+5. Afterwards: `bash run_demo/run_wsl.sh stop`.
 
 **What changes at a new venue:**
 
@@ -120,8 +128,14 @@ If any of these fails, switch everything to your backup network and carry on wit
 
 ### 2. Open the laptop to the network (Windows, Administrator PowerShell)
 
-Open **PowerShell as Administrator** and paste this block. It is safe to run again, and
-you must run it again after every reboot, because WSL's internal address changes.
+**`run_demo\run_windows.cmd` does this step and [step 4](#4-start-mediamtx-windows).**
+Double-click it in Explorer, at `\\wsl.localhost\Ubuntu-24.04\home\peter\htx-demo\run_demo`
+(a desktop shortcut to it works too), and allow administrator rights. It prints the same
+five lines. Its first line, `UNC paths are not supported`, is harmless.
+
+To do it by hand, open **PowerShell as Administrator** and paste this block. Either way,
+it is safe to run again, and you must run it again after every reboot, because WSL's
+internal address changes.
 
 ```powershell
 $wsl = (wsl hostname -I).Trim().Split(' ')[0]           # WSL's internal IP (changes after a reboot)
@@ -162,6 +176,19 @@ page is static files and holds no token.
 
 ### 3. Start Qwen and the backend (WSL terminal 1)
 
+**`bash run_demo/run_wsl.sh` does this step**, and leaves the terminal free:
+
+- It starts Qwen, sets the camera URL in `config.toml`, and runs the backend and both web
+  pages in tmux sessions (`qwen`, `backend`, `webpage`, `webapp`).
+- Then it checks everything and prints the addresses and the token.
+  `bash run_demo/run_wsl.sh check` checks again.
+- `tmux attach -t backend` shows the backend's output (`Ctrl+B`, then `D`, leaves it
+  running).
+- To run it with another Qwen model, put the model name last:
+  `GPU_UTIL=0.86 MAX_LEN=2048 bash run_demo/run_wsl.sh 4b-fp8`.
+
+By hand:
+
 ```bash
 conda activate htx && cd ~/htx-demo
 bash server/start_laptop.sh        # Qwen; wait for "Qwen is up" (about 1 min) or "already running" ... GPU_UTIL=0.86 MAX_LEN=2048 bash server/start_laptop.sh 4b-fp8
@@ -170,11 +197,12 @@ python run.py backend             # leave it running
 ```
 
 - **Before you start the backend,** check that `[sources.external_camera] url` in
-  `config.toml` is the printed camera URL. Its address is Windows as seen from WSL, and it
-  can change after a reboot. The backend reads `config.toml` only when it starts.
+  `config.toml` is the printed camera URL (`run_wsl.sh` sets it). Its address is Windows as
+  seen from WSL, and it can change after a reboot. The backend reads `config.toml` only
+  when it starts.
 - The backend must say **port 8100**. If it says 8101 or higher, an old backend is
   still running: stop it with `pkill -f "run.py backend"` and start this one again. The
-  port forward only covers 8100.
+  port forward only covers 8100. (`run_wsl.sh` stops old backends first.)
 - Start Qwen before anything else that uses the GPU, because vLLM reserves its memory
   when it starts.
 
@@ -182,8 +210,8 @@ Steps 4 and 5 can be done while Qwen loads.
 
 ### 4. Start MediaMTX (Windows)
 
-Run `C:\mediamtx\mediamtx.exe` from its own folder. Its log should say
-`configuration loaded`. Keep the window open.
+`run_windows.cmd` starts it. By hand: run `C:\mediamtx\mediamtx.exe` from its own folder.
+Its log should say `configuration loaded`. Keep the window open.
 
 ### 5. Start the camera stream (phone with DJI Mimo)
 
@@ -263,7 +291,7 @@ python run.py inspect rtsp://$WIN:8554/live/x2 --save results/venue_$(date +%H%M
 The [tablet web page](#tablet-web-page-web-tablet) shows the app's screen in a browser, for
 **External camera** and **Pre-recorded video** (it has no tablet camera). If the app's
 session is still running, the page joins it as a second viewer, so detection doesn't
-restart. Start it in WSL terminal 3:
+restart. `run_wsl.sh` starts it. By hand, in WSL terminal 3:
 
 ```bash
 conda activate htx && cd ~/htx-demo
@@ -276,7 +304,7 @@ python web-tablet/serve.py        # port 5174; leave it running
   **Settings**, enter the **Tablet app backend URL** from step 2 and the token. Don't use
   `localhost:8100` here: on the tablet, `localhost` is the tablet itself.
   - Step 2 forwards port 5174 from the Wi-Fi to WSL. If the page opens on the laptop but
-    times out on the tablet, run the step 2 block again.
+    times out on the tablet, run `run_windows.cmd` again (step 2).
 - To join the app's session, pick the **same source** (for a video, the same file). While
   that session runs, other sources are refused: stop it in the app first. If the app was
   on **Tablet camera**, stop it there too, because the backend has no picture of it to
@@ -286,11 +314,15 @@ python web-tablet/serve.py        # port 5174; leave it running
 ### Stopping
 
 1. Press `q` in the inspection window, if it runs.
-2. Press `Ctrl+C` in the backend terminal. This also finishes the session recordings in
-   `results/recordings/` ([Recordings](#recordings)).
-3. Press `Ctrl+C` in the web page's terminal, if it runs.
-4. Stop the livestream in Mimo, close MediaMTX, and turn off the camera.
-5. Free the GPU: `bash server/stop_all.sh qwen`.
+2. In WSL, run `bash run_demo/run_wsl.sh stop`. It stops:
+   - the web pages;
+   - the backend, which finishes the session recordings in `results/recordings/`
+     ([Recordings](#recordings));
+   - Qwen, which frees the GPU.
+
+   By hand: press `Ctrl+C` in the backend's terminal and in the web page's terminal, then
+   run `bash server/stop_all.sh qwen`.
+3. Stop the livestream in Mimo, close MediaMTX, and turn off the camera.
 
 The port forward and firewall rules can stay; they only let in devices on the same
 network, and only on the demo ports.
@@ -299,24 +331,24 @@ network, and only on the demo ports.
 
 | Symptom | Cause and fix |
 |---|---|
-| Tablet: **connection timed out** | (1) The laptop was rebooted, or WSL restarted, since step 2: run the step 2 block again. (2) The tablet is on another network: its IP must start like the laptop's (e.g. `192.168.50.x`). (3) The Wi-Fi blocks devices from reaching each other: switch to your backup network. |
+| Tablet: **connection timed out** | (1) The laptop was rebooted, or WSL restarted, since step 2: run `run_windows.cmd` again (step 2). (2) The tablet is on another network: its IP must start like the laptop's (e.g. `192.168.50.x`). (3) The Wi-Fi blocks devices from reaching each other: switch to your backup network. |
 | Tablet: **connection refused** | The backend isn't running, or it runs on another port than 8100 (step 3). |
 | Tablet: **401**, or the WebSocket closes at once | Wrong token. Check it with `grep BACKEND_TOKEN ~/htx-demo/.env`. |
 | Tablet: **already running**, or the backend is in use by another device | The backend runs one session at a time. Stop it on the device that started it (putting the app in the background doesn't stop a **Pre-recorded video** session), or restart the backend. |
 | Tablet: **External camera is not configured** | `[sources.external_camera] url` in `config.toml` is empty. Set it (step 3) and restart the backend. |
 | Tablet: **External camera** shows no picture | MediaMTX isn't running, or the camera isn't publishing: the MediaMTX log must show `is publishing to path 'live/x2'`. In WSL, `python run.py camera-check <the URL from config.toml>` must show the picture. The session ends after 30 s without frames (`[input] stream_timeout`); fix the stream, then pick the source again. During a short outage, the last picture stays on screen. |
 | Tablet: no **External camera** option | Install the latest app. |
-| Web page: opens on the laptop (`localhost:5174`) but times out on the tablet or a phone | Port 5174 isn't forwarded into WSL. The laptop reaches WSL through `localhost`; other devices reach only the ports Windows forwards. Run the step 2 block again (older copies of it forwarded only 8100). To check, run `netsh interface portproxy show v4tov4` in PowerShell: it must list 8100 and 5174, both to the address that `wsl hostname -I` prints. |
+| Web page: opens on the laptop (`localhost:5174`) but times out on the tablet or a phone | Port 5174 isn't forwarded into WSL. The laptop reaches WSL through `localhost`; other devices reach only the ports Windows forwards. Run `run_windows.cmd` again (step 2). To check, run `bash run_demo/run_wsl.sh check` (the `forward` line), or `netsh interface portproxy show v4tov4` in PowerShell: it must list 8100 and 5174, both to the address that `wsl hostname -I` prints. |
 | Web page: opens on the tablet, but can't connect to the backend | **Settings** has `http://localhost:8100`, which on the tablet means the tablet. Enter the **Tablet app backend URL** from step 2. |
 | Tablet: no videos under **Pre-recorded video** | Put video files (`.mov`, `.mp4`, `.mkv`, …) directly in `[server] video_dir` (`~/htx-demo`); subfolders aren't listed. |
 | Tablet: **Qwen assistance unavailable** | Detection goes on without Qwen. Qwen isn't running, or it serves another model than `[models] qwen_model`. Run `bash server/status.sh`, then `bash server/start_laptop.sh`. The tablet checks for Qwen when a session starts, so change source afterwards. |
 | A `config.toml` change has no effect | Restart the backend. It reads the file only when it starts. |
 | Mimo **can't find the camera** | Check that the phone's Wi-Fi and Bluetooth are both on and that Mimo is up to date. A DJI Mic 2 on 2.4 GHz blocks Mimo: switch the camera to 5.8 GHz under Wireless Connection, or disconnect the mic. |
-| Mimo: **Livestream failed**, or nothing in the MediaMTX log | The RTMP address must be the **Wi-Fi IP printed in step 2** (it changes per venue), not the WSL address. The camera must be on the same Wi-Fi. A login page also blocks the camera: use the backup network. If the firewall rule for TCP 1935 is missing, run the step 2 block again. |
-| Inspection or backend log: **`method DESCRIBE failed: 404 (Not Found)`**, then **No frames from rtsp://… after 30 s** | MediaMTX is reachable, but the camera isn't publishing to `live/x2`; its log shows no `is publishing to path` line. Usually Mimo still has an old address: the Wi-Fi IP changes with every network, including when you switch to a phone hotspot. Run the step 2 block again and put the new **DJI Mimo RTMP address** into Mimo. The stream reader retries for 30 s, so it picks up the stream if you fix it in time. |
+| Mimo: **Livestream failed**, or nothing in the MediaMTX log | The RTMP address must be the **Wi-Fi IP printed in step 2** (it changes per venue), not the WSL address. The camera must be on the same Wi-Fi. A login page also blocks the camera: use the backup network. If the firewall rule for TCP 1935 is missing, run `run_windows.cmd` again (step 2). |
+| Inspection or backend log: **`method DESCRIBE failed: 404 (Not Found)`**, then **No frames from rtsp://… after 30 s** | MediaMTX is reachable, but the camera isn't publishing to `live/x2`; its log shows no `is publishing to path` line. Usually Mimo still has an old address: the Wi-Fi IP changes with every network, including when you switch to a phone hotspot. Run `run_windows.cmd` again (step 2) and put the new **DJI Mimo RTMP address** into Mimo. The stream reader retries for 30 s, so it picks up the stream if you fix it in time. |
 | Inspection or backend log: **No frames from rtsp://… after 30 s**, without a 404 | MediaMTX isn't running. In WSL, use the step 3 address (`$WIN` in step 7), not the Wi-Fi IP. |
 | Inspection or backend: **Cannot reach Qwen** | Run `bash server/status.sh`, then `bash server/start_laptop.sh`. |
-| **Qwen doesn't come up on a network without internet** | The models are on the laptop, but Qwen may wait on Hugging Face. Start it with `bash server/stop_all.sh qwen` and then `HF_HUB_OFFLINE=1 bash server/start_laptop.sh`. This only works when no other tmux session is open: Qwen runs in tmux, and otherwise it won't see the setting. |
+| **Qwen doesn't come up on a network without internet** | The models are on the laptop, but Qwen may wait on Hugging Face. Start it with `bash server/stop_all.sh qwen` and then `HF_HUB_OFFLINE=1 bash server/start_laptop.sh`. This only works when no other tmux session is open: Qwen runs in tmux, and otherwise it won't see the setting. `run_wsl.sh` does this by itself when it can't reach huggingface.co. |
 | Frequent "stream lost — reconnecting" | Weak Wi-Fi, the phone went to sleep, or the camera is hot or low on battery. Runs reconnect by themselves and end only after 30 s without frames. |
 
 ### Notes
@@ -334,7 +366,7 @@ network, and only on the demo ports.
     dropped, 22 ms per frame.
   - The combined inspection hasn't run on the camera yet.
   - To measure the camera's delay, use `python run.py camera-check --clock` (see
-    [live-camera.md](live-camera.md)).
+    [live-camera.md](../docs/live-camera.md)).
 
 ---
 
@@ -439,7 +471,7 @@ The dev laptop already has all of this. For another laptop, start with the READM
 3. **`.env` and the backend token:** copy `.env.sample` to `.env` if there is none, then run
    `echo "BACKEND_TOKEN=$(python -c 'import secrets; print(secrets.token_hex(16))')" >> .env`.
    The tablet app needs the token.
-4. **Port forward and firewall rules:** the block in [step 2](#2-open-the-laptop-to-the-network-windows-administrator-powershell)
+4. **Port forward and firewall rules:** `run_windows.cmd`, or the block in [step 2](#2-open-the-laptop-to-the-network-windows-administrator-powershell)
    creates them.
 5. **Models:** see [Before you leave](#before-you-leave).
 
@@ -561,7 +593,10 @@ and every server session from a stream URL or the external camera, as two videos
 `results/recordings/`:
 
 - `<session>_original.mkv`: the frames the backend analysed;
-- `<session>_annotated.mkv`: the same frames with the boxes and statuses.
+- `<session>_annotated.mkv`: the same frames with the boxes and statuses. The bottom-left
+  corner shows when each frame arrived: the clock time (`2026-11-05 14:03:12.345`) and
+  `t=`, the session time that `report.json` and the events use. The two videos have the
+  same frames at the same positions, so the stamp also dates the original.
 
 Server sessions that play a video file aren't recorded. The videos play in real time at
 `[server] record_fps`; `[server] record = false` turns recording off. They play in VLC. To
@@ -624,11 +659,11 @@ Notes:
 
 **Server-side sessions.** The tablet uses these for **Pre-recorded video** and **External
 camera**. The server reads a video file or camera stream and sends annotated MJPEG frames
-back (`/api/sessions…` in the [API reference](android-api.md#rest-endpoints)). They are
+back (`/api/sessions…` in the [API reference](../docs/android-api.md#rest-endpoints)). They are
 useful for recording and reports, but they lag over a slow link.
 
 **Building your own app** (Android, another web app, a script): the full API, with
-request and response examples, is in [Backend API reference](android-api.md).
+request and response examples, is in [Backend API reference](../docs/android-api.md).
 
 `python run.py exits --stream` still works for quick checks: an all-in-one browser view
 (`/stream`), plus `/stream/original`, `/stream/annotated` and `/state`.
@@ -752,7 +787,7 @@ For webcams and streams, `core/video_io.py:LiveSource` always processes the newe
 so delay can't build up when processing is slower than the camera. It reconnects when the
 stream drops and ends the run after 30 s without frames. Times in logs and reports are
 seconds since the first frame. Setup (MediaMTX, DJI Mimo, WSL2 networking, USB), latency
-and troubleshooting are in **[docs/live-camera.md](live-camera.md)**.
+and troubleshooting are in **[docs/live-camera.md](../docs/live-camera.md)**.
 
 ### Tools
 

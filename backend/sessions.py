@@ -157,7 +157,7 @@ class Session:
                 self._frames[name] = (jpeg, self._frames.get(name, (None, 0))[1] + 1)
             self._state = {**state, "mode": self.mode}
         if self.recorder:
-            self.recorder.add(original, annotated)
+            self.recorder.add(original, annotated, video_time=state.get("video_time_s"))
 
     def _on_event(self, event: dict):
         with self._lock:

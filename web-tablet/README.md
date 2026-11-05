@@ -41,7 +41,7 @@ On a Windows laptop that runs `serve.py` and the backend in WSL2 (NAT networking
 other devices can't reach ports 5174 and 8100 until Windows forwards them. The laptop's
 own browser reaches them at `localhost` without a forward, so the page can work there
 and still time out on a phone. The PowerShell block in
-[docs/running.md, step 2](../docs/running.md#2-open-the-laptop-to-the-network-windows-administrator-powershell)
+[run_demo/running.md, step 2](../run_demo/running.md#2-open-the-laptop-to-the-network-windows-administrator-powershell)
 forwards both ports and opens the firewall for the local network.
 
 The existing backend permits browser requests by default (`CORS: *`). If your
